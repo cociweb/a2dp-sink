@@ -135,6 +135,7 @@ void A2DPSinkMediaSource::handle_command(media_source::MediaSourceCommand comman
     case media_source::MediaSourceCommand::STOP:
       ESP_LOGI(TAG, "STOP");
       this->parent_->get_parent()->set_audio_output_enabled(false);
+      this->parent_->get_parent()->request_audio_suspend();
 #ifdef USE_A2DP_AVRCP
       this->parent_->get_parent()->send_avrc_passthrough(ESP_AVRC_PT_CMD_PAUSE);
 #endif
@@ -261,6 +262,7 @@ void A2DPSinkMediaSource::reader_task_() {
           audio_source->consume(written);
         } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
           this->parent_->get_parent()->set_audio_output_enabled(false);
+          this->parent_->get_parent()->request_audio_suspend();
           goto task_exit_with_idle;
         }
       }
@@ -294,6 +296,7 @@ read_chunk:
         audio_source->consume(written);
       } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
         this->parent_->get_parent()->set_audio_output_enabled(false);
+        this->parent_->get_parent()->request_audio_suspend();
         goto task_exit_with_idle;
       }
     }

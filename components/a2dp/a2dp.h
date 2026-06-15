@@ -105,6 +105,7 @@ class A2DP : public Component {
   void enable();
   void disable();
   void restart_discovery();
+  void request_audio_suspend();
 
   // --- State accessors ---
 
@@ -252,6 +253,7 @@ class A2DP : public Component {
   bool connected_{false};
   bool audio_streaming_{false};
   std::atomic<bool> audio_output_enabled_{true};
+  std::atomic<bool> audio_suspend_requested_{false};
   bool discoverable_{false};
   uint32_t discoverable_started_at_{0};
   char peer_name_[64]{};  ///< Last connected device name (truncated to 63 chars)

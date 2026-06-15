@@ -177,6 +177,13 @@ void A2DP::setup() {
 }
 
 void A2DP::loop() {
+  if (this->audio_suspend_requested_.exchange(false, std::memory_order_relaxed) && this->enabled_ &&
+      this->connected_ && this->audio_streaming_) {
+    esp_err_t ret = esp_a2d_media_ctrl(ESP_A2D_MEDIA_CTRL_SUSPEND);
+    if (ret != ESP_OK)
+      ESP_LOGW(TAG, "esp_a2d_media_ctrl(SUSPEND) failed: %s", esp_err_to_name(ret));
+  }
+
   if (this->discoverable_ && this->discoverable_duration_ms_ > 0 &&
       (millis() - this->discoverable_started_at_) >= this->discoverable_duration_ms_) {
     this->stop_discovery_();
@@ -216,6 +223,7 @@ void A2DP::loop() {
         if (this->connected_) {
           this->connected_ = false;
           this->audio_streaming_ = false;
+          this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
           ESP_LOGI(TAG, "BT disconnected");
 #ifdef USE_SOFTWARE_COEXISTENCE
           if (this->software_coexistence_)
@@ -245,6 +253,7 @@ void A2DP::loop() {
       case A2DPEvent::AUDIO_STOPPED:
         if (this->audio_streaming_) {
           this->audio_streaming_ = false;
+          this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
           ESP_LOGI(TAG, "A2DP audio stopped");
 #ifdef USE_SOFTWARE_COEXISTENCE
           if (this->software_coexistence_ && this->prefer_bt_while_streaming_)
@@ -360,6 +369,7 @@ void A2DP::disable() {
   this->enabled_ = false;
   this->connected_ = false;
   this->audio_streaming_ = false;
+  this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
   this->reconnect_at_ = 0;
   this->reconnect_attempts_ = 0;
 #ifdef USE_SOFTWARE_COEXISTENCE
@@ -382,6 +392,10 @@ void A2DP::restart_discovery() {
     return;
   }
   this->start_discovery_();
+}
+
+void A2DP::request_audio_suspend() {
+  this->audio_suspend_requested_.store(true, std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
