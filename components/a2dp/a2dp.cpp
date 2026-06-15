@@ -209,7 +209,8 @@ void A2DP::loop() {
           this->reconnect_at_ = 0;
           this->reconnect_attempts_ = 0;
           this->save_peer_(ev.remote_bda);
-          this->stop_discovery_();
+          if (!this->keep_discoverable_after_connect_)
+            this->stop_discovery_();
           ESP_LOGI(TAG, "BT connected");
 #ifdef USE_SOFTWARE_COEXISTENCE
           if (this->software_coexistence_ && !this->prefer_bt_while_discoverable_)
