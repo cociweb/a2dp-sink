@@ -284,6 +284,7 @@ void A2DP::loop() {
         ESP_LOGD(TAG, "AVRCP CT connected");
         this->avrcp_ct_state_callback_.call(true);
         this->request_avrcp_metadata();
+        this->request_avrcp_track_change_notification();
         break;
 
       case A2DPEvent::AVRCP_CT_DISCONNECTED:
@@ -294,6 +295,12 @@ void A2DP::loop() {
 
       case A2DPEvent::AVRCP_METADATA_UPDATED:
         this->avrcp_metadata_callback_.call(ev.metadata_attr, ev.metadata);
+        break;
+
+      case A2DPEvent::AVRCP_TRACK_CHANGED:
+        this->avrcp_track_change_callback_.call();
+        this->metadata_refresh_at_ = millis() + 500;
+        this->request_avrcp_track_change_notification();
         break;
 #endif
 
@@ -663,6 +670,14 @@ void A2DP::handle_avrc_ct_event_(esp_avrc_ct_cb_event_t event, esp_avrc_ct_cb_pa
       }
       ev.metadata[len] = '\0';
       xQueueSend(this->event_queue_, &ev, 0);
+      break;
+    }
+    case ESP_AVRC_CT_CHANGE_NOTIFY_EVT: {
+      if (param->change_ntf.event_id == ESP_AVRC_RN_TRACK_CHANGE) {
+        A2DPEventRecord ev{};
+        ev.type = A2DPEvent::AVRCP_TRACK_CHANGED;
+        xQueueSend(this->event_queue_, &ev, 0);
+      }
       break;
     }
     default:

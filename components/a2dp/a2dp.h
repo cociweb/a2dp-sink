@@ -39,6 +39,7 @@ enum class A2DPEvent : uint8_t {
   AVRCP_CT_CONNECTED,
   AVRCP_CT_DISCONNECTED,
   AVRCP_METADATA_UPDATED,
+  AVRCP_TRACK_CHANGED,
 #endif
 };
 
@@ -153,6 +154,10 @@ class A2DP : public Component {
   void add_on_avrcp_metadata_callback(F &&callback) {
     this->avrcp_metadata_callback_.add(std::forward<F>(callback));
   }
+  template<typename F>
+  void add_on_avrcp_track_change_callback(F &&callback) {
+    this->avrcp_track_change_callback_.add(std::forward<F>(callback));
+  }
 
   uint8_t get_avrcp_volume() const { return this->avrcp_volume_; }
   bool is_avrcp_ct_connected() const { return this->avrcp_ct_connected_; }
@@ -166,8 +171,10 @@ class A2DP : public Component {
     this->avrc_ct_tl_ = (this->avrc_ct_tl_ + 2) % 15;
     esp_avrc_ct_send_passthrough_cmd(tl, key_code, ESP_AVRC_PT_CMD_STATE_PRESSED);
     esp_avrc_ct_send_passthrough_cmd((tl + 1) % 15, key_code, ESP_AVRC_PT_CMD_STATE_RELEASED);
-    if (refresh_metadata)
+    if (refresh_metadata) {
+      this->avrcp_track_change_callback_.call();
       this->metadata_refresh_at_ = millis() + 500;
+    }
   }
 
   void request_avrcp_metadata() {
@@ -176,6 +183,14 @@ class A2DP : public Component {
     uint8_t tl = this->avrc_ct_tl_;
     this->avrc_ct_tl_ = (this->avrc_ct_tl_ + 1) % 15;
     esp_avrc_ct_send_metadata_cmd(tl, ESP_AVRC_MD_ATTR_TITLE | ESP_AVRC_MD_ATTR_ARTIST | ESP_AVRC_MD_ATTR_ALBUM);
+  }
+
+  void request_avrcp_track_change_notification() {
+    if (!this->avrcp_ct_connected_)
+      return;
+    uint8_t tl = this->avrc_ct_tl_;
+    this->avrc_ct_tl_ = (this->avrc_ct_tl_ + 1) % 15;
+    esp_avrc_ct_send_register_notification_cmd(tl, ESP_AVRC_RN_TRACK_CHANGE, 0);
   }
 #endif
 
@@ -258,6 +273,7 @@ class A2DP : public Component {
   LazyCallbackManager<void(uint8_t)> avrcp_volume_callback_;
   LazyCallbackManager<void(bool)> avrcp_ct_state_callback_;
   LazyCallbackManager<void(uint8_t, const char *)> avrcp_metadata_callback_;
+  LazyCallbackManager<void()> avrcp_track_change_callback_;
 #endif
 };
 

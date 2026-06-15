@@ -56,6 +56,15 @@ void A2DPSinkMediaSource::setup() {
       xEventGroupSetBits(this->event_group_, EVT_CMD_DRAIN);
     }
   });
+
+#ifdef USE_A2DP_AVRCP
+  this->parent_->add_on_avrcp_track_change_callback([this]() {
+    if (this->pending_stop_)
+      return;
+    if (this->get_state() != media_source::MediaSourceState::IDLE)
+      xEventGroupSetBits(this->event_group_, EVT_CMD_FLUSH);
+  });
+#endif
 }
 
 void A2DPSinkMediaSource::loop() {
@@ -207,6 +216,12 @@ void A2DPSinkMediaSource::reader_task_() {
 
     if (bits & EVT_CMD_STOP)
       goto task_exit_no_idle;
+
+    if (bits & EVT_CMD_FLUSH) {
+      xEventGroupClearBits(this->event_group_, EVT_CMD_FLUSH | EVT_CMD_DRAIN);
+      audio_source->clear_buffered_data();
+      continue;
+    }
 
     if (bits & EVT_CMD_DRAIN) {
       // BT audio stopped: drain remaining ring buffer data, then signal IDLE.

@@ -54,6 +54,11 @@ class A2DPSink : public Component, public Parented<a2dp::A2DP> {
   void add_on_avrcp_volume_callback(F &&callback) {
     this->parent_->add_on_avrcp_volume_callback(std::forward<F>(callback));
   }
+
+  template<typename F>
+  void add_on_avrcp_track_change_callback(F &&callback) {
+    this->parent_->add_on_avrcp_track_change_callback(std::forward<F>(callback));
+  }
 #endif
 
   // --- Callback registration ---

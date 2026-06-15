@@ -36,6 +36,7 @@ static constexpr EventBits_t EVT_CMD_START = BIT0;  ///< play_uri / resume
 static constexpr EventBits_t EVT_CMD_STOP  = BIT1;  ///< stop immediately
 static constexpr EventBits_t EVT_CMD_PAUSE = BIT2;  ///< pause output
 static constexpr EventBits_t EVT_CMD_DRAIN = BIT3;  ///< BT audio stopped, drain buffer
+static constexpr EventBits_t EVT_CMD_FLUSH = BIT6;  ///< track changed, discard stale buffered PCM
 
 // --- Event bits: reader task → main loop ---
 /// Task finished normally and wants the orchestrator notified of IDLE.
@@ -44,7 +45,7 @@ static constexpr EventBits_t EVT_TASK_WANT_IDLE  = BIT4;
 static constexpr EventBits_t EVT_TASK_SUSPENDED  = BIT5;
 
 static constexpr EventBits_t EVT_ALL_CMD_BITS =
-    EVT_CMD_START | EVT_CMD_STOP | EVT_CMD_PAUSE | EVT_CMD_DRAIN;
+    EVT_CMD_START | EVT_CMD_STOP | EVT_CMD_PAUSE | EVT_CMD_DRAIN | EVT_CMD_FLUSH;
 static constexpr EventBits_t EVT_ALL_BITS =
     EVT_ALL_CMD_BITS | EVT_TASK_WANT_IDLE | EVT_TASK_SUSPENDED;
 
