@@ -94,6 +94,7 @@ class A2DPSinkMediaSource : public Component,
   StaticTask task_;
   EventGroupHandle_t event_group_{nullptr};
   bool task_stack_in_psram_{false};
+  bool pending_stop_{false};
 };
 
 }  // namespace esphome::a2dp_sink

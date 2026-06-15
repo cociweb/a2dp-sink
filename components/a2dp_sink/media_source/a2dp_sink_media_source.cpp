@@ -37,6 +37,8 @@ void A2DPSinkMediaSource::setup() {
   // NOTE: these lambdas run on the main loop thread (dispatched via the event queue
   // in A2DPSink::loop()), so xEventGroupSetBits is safe here.
   this->parent_->add_on_audio_streaming_callback([this](bool streaming) {
+    if (this->pending_stop_)
+      return;
     if (this->get_state() == media_source::MediaSourceState::IDLE)
       return;
     if (streaming) {
@@ -48,6 +50,8 @@ void A2DPSinkMediaSource::setup() {
   });
 
   this->parent_->get_parent()->add_on_connection_callback([this](bool connected) {
+    if (this->pending_stop_)
+      return;
     if (!connected && this->get_state() != media_source::MediaSourceState::IDLE) {
       xEventGroupSetBits(this->event_group_, EVT_CMD_DRAIN);
     }
@@ -70,6 +74,10 @@ void A2DPSinkMediaSource::loop() {
   if (bits & EVT_TASK_SUSPENDED) {
     xEventGroupClearBits(this->event_group_, EVT_TASK_SUSPENDED);
     this->task_.deallocate();
+    if (this->pending_stop_) {
+      this->pending_stop_ = false;
+      this->set_state_(media_source::MediaSourceState::IDLE);
+    }
   }
 }
 
@@ -104,6 +112,7 @@ bool A2DPSinkMediaSource::play_uri(const std::string &uri) {
 
   xEventGroupClearBits(this->event_group_, EVT_ALL_BITS);
   xEventGroupSetBits(this->event_group_, EVT_CMD_START);
+  this->pending_stop_ = false;
 
   this->start_task_();
   this->set_state_(media_source::MediaSourceState::PLAYING);
@@ -115,10 +124,14 @@ void A2DPSinkMediaSource::handle_command(media_source::MediaSourceCommand comman
   switch (command) {
     case media_source::MediaSourceCommand::STOP:
       ESP_LOGI(TAG, "STOP");
-      xEventGroupClearBits(this->event_group_, EVT_ALL_CMD_BITS);
+      xEventGroupClearBits(this->event_group_, EVT_ALL_CMD_BITS | EVT_TASK_WANT_IDLE);
       xEventGroupSetBits(this->event_group_, EVT_CMD_STOP);
-      // Report IDLE immediately from the main loop — the task will clean up asynchronously.
-      this->set_state_(media_source::MediaSourceState::IDLE);
+      if (this->task_.is_created()) {
+        this->pending_stop_ = true;
+      } else {
+        this->pending_stop_ = false;
+        this->set_state_(media_source::MediaSourceState::IDLE);
+      }
       break;
 
     case media_source::MediaSourceCommand::PAUSE:
@@ -216,6 +229,8 @@ void A2DPSinkMediaSource::reader_task_() {
           vTaskDelay(pdMS_TO_TICKS(IDLE_POLL_MS));
           continue;
         }
+        if (xEventGroupGetBits(this->event_group_) & EVT_CMD_STOP)
+          goto task_exit_no_idle;
         audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
                                     this->parent_->get_actual_sample_rate());
         if (size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
@@ -243,6 +258,8 @@ read_chunk:
         vTaskDelay(pdMS_TO_TICKS(IDLE_POLL_MS));
         continue;
       }
+      if (xEventGroupGetBits(this->event_group_) & EVT_CMD_STOP)
+        goto task_exit_no_idle;
       audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
                                   this->parent_->get_actual_sample_rate());
       if (size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
