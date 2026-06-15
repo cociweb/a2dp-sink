@@ -117,6 +117,7 @@ bool A2DPSinkMediaSource::play_uri(const std::string &uri) {
   }
 
   // Flush stale data from a previous session.
+  this->parent_->get_parent()->set_audio_output_enabled(true);
   this->parent_->get_parent()->reset_audio_buffer();
 
   xEventGroupClearBits(this->event_group_, EVT_ALL_BITS);
@@ -133,6 +134,10 @@ void A2DPSinkMediaSource::handle_command(media_source::MediaSourceCommand comman
   switch (command) {
     case media_source::MediaSourceCommand::STOP:
       ESP_LOGI(TAG, "STOP");
+      this->parent_->get_parent()->set_audio_output_enabled(false);
+#ifdef USE_A2DP_AVRCP
+      this->parent_->get_parent()->send_avrc_passthrough(ESP_AVRC_PT_CMD_PAUSE);
+#endif
       xEventGroupClearBits(this->event_group_, EVT_ALL_CMD_BITS | EVT_TASK_WANT_IDLE);
       xEventGroupSetBits(this->event_group_, EVT_CMD_STOP);
       if (this->task_.is_created()) {
@@ -286,6 +291,7 @@ read_chunk:
 
 task_exit_with_idle:
   ESP_LOGD(TAG, "Reader task: drain done, signalling IDLE");
+  audio_source->clear_buffered_data();
   xEventGroupSetBits(this->event_group_, EVT_TASK_WANT_IDLE | EVT_TASK_SUSPENDED);
   App.wake_loop_threadsafe();
   vTaskSuspend(nullptr);
@@ -293,6 +299,7 @@ task_exit_with_idle:
 
 task_exit_no_idle:
   ESP_LOGD(TAG, "Reader task: stopped by command");
+  audio_source->clear_buffered_data();
   xEventGroupSetBits(this->event_group_, EVT_TASK_SUSPENDED);
   App.wake_loop_threadsafe();
   vTaskSuspend(nullptr);

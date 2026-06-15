@@ -50,7 +50,7 @@ class A2DPAVRCP : public Component, public Parented<A2DP> {
   }
   void next_track()     { this->parent_->send_avrc_passthrough(ESP_AVRC_PT_CMD_FORWARD, true); }
   void previous_track() { this->parent_->send_avrc_passthrough(ESP_AVRC_PT_CMD_BACKWARD, true); }
-  void stop()           { this->parent_->send_avrc_passthrough(ESP_AVRC_PT_CMD_STOP); }
+  void stop()           { this->parent_->send_avrc_passthrough(ESP_AVRC_PT_CMD_PAUSE); }
   void volume_up()      { this->parent_->send_avrc_passthrough(ESP_AVRC_PT_CMD_VOL_UP); }
   void volume_down()    { this->parent_->send_avrc_passthrough(ESP_AVRC_PT_CMD_VOL_DOWN); }
 

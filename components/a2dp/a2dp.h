@@ -114,6 +114,7 @@ class A2DP : public Component {
   const char *get_peer_name() const { return this->peer_name_; }
 
   std::shared_ptr<ring_buffer::RingBuffer> get_ring_buffer() { return this->ring_buffer_; }
+  void set_audio_output_enabled(bool enabled) { this->audio_output_enabled_ = enabled; }
   void reset_audio_buffer() {
     if (this->ring_buffer_ != nullptr)
       this->ring_buffer_->reset();
@@ -247,6 +248,7 @@ class A2DP : public Component {
   bool enabled_{false};
   bool connected_{false};
   bool audio_streaming_{false};
+  bool audio_output_enabled_{true};
   bool discoverable_{false};
   uint32_t discoverable_started_at_{0};
   char peer_name_[64]{};  ///< Last connected device name (truncated to 63 chars)
