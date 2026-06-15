@@ -76,7 +76,8 @@ void A2DPSinkMediaSource::loop() {
   // Task wants to transition the orchestrator to IDLE.
   if (bits & EVT_TASK_WANT_IDLE) {
     xEventGroupClearBits(this->event_group_, EVT_TASK_WANT_IDLE);
-    this->set_state_(media_source::MediaSourceState::IDLE);
+    if (!this->pending_stop_)
+      this->set_state_(media_source::MediaSourceState::IDLE);
   }
 
   // Task has suspended and is safe to deallocate.
@@ -85,7 +86,6 @@ void A2DPSinkMediaSource::loop() {
     this->task_.deallocate();
     if (this->pending_stop_) {
       this->pending_stop_ = false;
-      this->set_state_(media_source::MediaSourceState::IDLE);
     }
   }
 }
@@ -142,6 +142,7 @@ void A2DPSinkMediaSource::handle_command(media_source::MediaSourceCommand comman
       xEventGroupSetBits(this->event_group_, EVT_CMD_STOP);
       if (this->task_.is_created()) {
         this->pending_stop_ = true;
+        this->set_state_(media_source::MediaSourceState::IDLE);
       } else {
         this->pending_stop_ = false;
         this->set_state_(media_source::MediaSourceState::IDLE);
