@@ -30,6 +30,7 @@ static constexpr uint32_t RB_READ_TIMEOUT_MS = 20;
 static constexpr uint32_t WRITE_TIMEOUT_MS = 100;
 /// @brief Polling interval (ms) when idle / draining.
 static constexpr uint32_t IDLE_POLL_MS = 10;
+static constexpr uint8_t ZERO_WRITE_STOP_COUNT = 3;
 
 // --- Event bits: main loop → reader task ---
 static constexpr EventBits_t EVT_CMD_START = BIT0;  ///< play_uri / resume

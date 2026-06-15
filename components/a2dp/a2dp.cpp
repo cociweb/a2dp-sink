@@ -609,7 +609,7 @@ void A2DP::handle_a2d_event_(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param
 }
 
 void A2DP::handle_audio_data_(const uint8_t *data, uint32_t len) {
-  if (this->audio_output_enabled_ && this->ring_buffer_ != nullptr)
+  if (this->audio_output_enabled_.load(std::memory_order_relaxed) && this->ring_buffer_ != nullptr)
     this->ring_buffer_->write(data, len);
 }
 

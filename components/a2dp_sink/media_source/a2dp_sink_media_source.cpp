@@ -194,6 +194,7 @@ void A2DPSinkMediaSource::reader_task_() {
 
   const uint32_t drain_ms = this->parent_->get_pcm_drain_throttle_ms();
   const uint32_t output_delay_ms = this->parent_->get_output_delay_ms();
+  uint8_t zero_write_count = 0;
 
   auto audio_source =
       audio::RingBufferAudioSource::create(this->parent_->get_ring_buffer(), READER_CHUNK_SIZE, 2 * sizeof(int16_t));
@@ -254,9 +255,13 @@ void A2DPSinkMediaSource::reader_task_() {
           goto task_exit_no_idle;
         audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
                                     this->parent_->get_actual_sample_rate());
-        if (size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
-            written > 0) {
+        size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
+        if (written > 0) {
+          zero_write_count = 0;
           audio_source->consume(written);
+        } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
+          this->parent_->get_parent()->set_audio_output_enabled(false);
+          goto task_exit_with_idle;
         }
       }
       // Drain timeout expired — signal the main loop to report IDLE.
@@ -283,9 +288,13 @@ read_chunk:
         goto task_exit_no_idle;
       audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
                                   this->parent_->get_actual_sample_rate());
-      if (size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
-          written > 0) {
+      size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
+      if (written > 0) {
+        zero_write_count = 0;
         audio_source->consume(written);
+      } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
+        this->parent_->get_parent()->set_audio_output_enabled(false);
+        goto task_exit_with_idle;
       }
     }
   }
