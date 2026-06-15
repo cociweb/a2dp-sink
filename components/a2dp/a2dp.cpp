@@ -186,6 +186,13 @@ void A2DP::loop() {
     this->reconnect_to_last_peer_();
   }
 
+#ifdef USE_A2DP_AVRCP
+  if (this->metadata_refresh_at_ != 0 && millis() >= this->metadata_refresh_at_) {
+    this->metadata_refresh_at_ = 0;
+    this->request_avrcp_metadata();
+  }
+#endif
+
   A2DPEventRecord ev;
   while (xQueueReceive(this->event_queue_, &ev, 0) == pdTRUE) {
     switch (ev.type) {

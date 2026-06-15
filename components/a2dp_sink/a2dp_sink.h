@@ -46,6 +46,16 @@ class A2DPSink : public Component, public Parented<a2dp::A2DP> {
 
   std::shared_ptr<ring_buffer::RingBuffer> get_ring_buffer() { return this->parent_->get_ring_buffer(); }
 
+#ifdef USE_A2DP_AVRCP
+  uint8_t get_avrcp_volume() const { return this->parent_->get_avrcp_volume(); }
+  bool is_avrcp_ct_connected() const { return this->parent_->is_avrcp_ct_connected(); }
+
+  template<typename F>
+  void add_on_avrcp_volume_callback(F &&callback) {
+    this->parent_->add_on_avrcp_volume_callback(std::forward<F>(callback));
+  }
+#endif
+
   // --- Callback registration ---
 
   template<typename F>

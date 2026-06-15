@@ -157,7 +157,7 @@ class A2DP : public Component {
   uint8_t get_avrcp_volume() const { return this->avrcp_volume_; }
   bool is_avrcp_ct_connected() const { return this->avrcp_ct_connected_; }
 
-  void send_avrc_passthrough(uint8_t key_code) {
+  void send_avrc_passthrough(uint8_t key_code, bool refresh_metadata = false) {
     if (!this->avrcp_ct_connected_) {
       ESP_LOGW("a2dp", "AVRCP CT not connected — passthrough ignored");
       return;
@@ -166,6 +166,8 @@ class A2DP : public Component {
     this->avrc_ct_tl_ = (this->avrc_ct_tl_ + 2) % 15;
     esp_avrc_ct_send_passthrough_cmd(tl, key_code, ESP_AVRC_PT_CMD_STATE_PRESSED);
     esp_avrc_ct_send_passthrough_cmd((tl + 1) % 15, key_code, ESP_AVRC_PT_CMD_STATE_RELEASED);
+    if (refresh_metadata)
+      this->metadata_refresh_at_ = millis() + 500;
   }
 
   void request_avrcp_metadata() {
@@ -237,6 +239,7 @@ class A2DP : public Component {
   uint8_t avrcp_volume_{127};
   bool avrcp_ct_connected_{false};
   uint8_t avrc_ct_tl_{0};
+  uint32_t metadata_refresh_at_{0};
 #endif
 
   // --- FreeRTOS event queue ---
