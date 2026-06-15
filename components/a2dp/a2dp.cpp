@@ -157,7 +157,7 @@ void A2DP::setup() {
 
   auto pref = this->use_psram_ ? ring_buffer::RingBuffer::MemoryPreference::EXTERNAL_FIRST
                                 : ring_buffer::RingBuffer::MemoryPreference::INTERNAL_FIRST;
-  this->ring_buffer_ = ring_buffer::RingBuffer::create(this->ring_buffer_size_, pref).release();
+  this->ring_buffer_ = ring_buffer::RingBuffer::create(this->ring_buffer_size_, pref);
   if (this->ring_buffer_ == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate ring buffer (%u bytes)", (unsigned) this->ring_buffer_size_);
     this->mark_failed();

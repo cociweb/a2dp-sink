@@ -9,10 +9,13 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include "esphome/core/preferences.h"
+#include "esphome/components/audio/audio_transfer_buffer.h"
 #include "esphome/components/ring_buffer/ring_buffer.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+
+#include <memory>
 
 #include "esp_a2dp_api.h"
 #include "esp_avrc_api.h"
@@ -109,8 +112,11 @@ class A2DP : public Component {
   bool is_discoverable() const { return this->discoverable_; }
   const char *get_peer_name() const { return this->peer_name_; }
 
-  /// @brief Return raw ring buffer pointer for use by media source tasks.
-  ring_buffer::RingBuffer *get_ring_buffer() { return this->ring_buffer_; }
+  std::shared_ptr<ring_buffer::RingBuffer> get_ring_buffer() { return this->ring_buffer_; }
+  void reset_audio_buffer() {
+    if (this->ring_buffer_ != nullptr)
+      this->ring_buffer_->reset();
+  }
 
   // --- Callback registration ---
 
@@ -238,7 +244,7 @@ class A2DP : public Component {
   static constexpr uint8_t EVENT_QUEUE_LEN = 8;
 
   // --- Ring buffer ---
-  ring_buffer::RingBuffer *ring_buffer_{nullptr};
+  std::shared_ptr<ring_buffer::RingBuffer> ring_buffer_;
 
   // --- Callbacks (consumed by subcomponents) ---
   LazyCallbackManager<void(bool)> connection_callback_;

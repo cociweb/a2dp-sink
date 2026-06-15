@@ -6,6 +6,7 @@
 
 #include "esphome/components/a2dp_sink/a2dp_sink.h"
 #include "esphome/components/audio/audio.h"
+#include "esphome/components/audio/audio_transfer_buffer.h"
 #include "esphome/components/media_source/media_source.h"
 #include "esphome/core/component.h"
 #include "esphome/core/static_task.h"
@@ -13,8 +14,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
-
-#include <atomic>
 
 namespace esphome::a2dp_sink {
 
@@ -95,9 +94,6 @@ class A2DPSinkMediaSource : public Component,
   StaticTask task_;
   EventGroupHandle_t event_group_{nullptr};
   bool task_stack_in_psram_{false};
-
-  /// @brief PCM read buffer — internal RAM (not PSRAM) for DMA-friendliness.
-  uint8_t read_buf_[READER_CHUNK_SIZE];
 };
 
 }  // namespace esphome::a2dp_sink

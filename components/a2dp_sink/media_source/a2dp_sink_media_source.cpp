@@ -100,7 +100,7 @@ bool A2DPSinkMediaSource::play_uri(const std::string &uri) {
   }
 
   // Flush stale data from a previous session.
-  this->parent_->get_ring_buffer()->reset();
+  this->parent_->get_parent()->reset_audio_buffer();
 
   xEventGroupClearBits(this->event_group_, EVT_ALL_BITS);
   xEventGroupSetBits(this->event_group_, EVT_CMD_START);
@@ -167,9 +167,10 @@ void A2DPSinkMediaSource::reader_task_() {
   const uint32_t drain_ms = this->parent_->get_pcm_drain_throttle_ms();
   const uint32_t output_delay_ms = this->parent_->get_output_delay_ms();
 
-  auto *rb = this->parent_->get_ring_buffer();
-  if (rb == nullptr) {
-    ESP_LOGE(TAG, "Ring buffer is null");
+  auto audio_source =
+      audio::RingBufferAudioSource::create(this->parent_->get_ring_buffer(), READER_CHUNK_SIZE, 2 * sizeof(int16_t));
+  if (audio_source == nullptr) {
+    ESP_LOGE(TAG, "Failed to create ring buffer audio source");
     xEventGroupSetBits(this->event_group_, EVT_TASK_WANT_IDLE | EVT_TASK_SUSPENDED);
     App.wake_loop_threadsafe();
     vTaskSuspend(nullptr);
@@ -206,18 +207,20 @@ void A2DPSinkMediaSource::reader_task_() {
           xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN);
           goto read_chunk;
         }
-        size_t available = rb->available();
+        if (audio_source->available() == 0) {
+          audio_source->fill(pdMS_TO_TICKS(RB_READ_TIMEOUT_MS), false);
+        }
+        size_t available = audio_source->available();
         if (available == 0) {
           drain_waited += IDLE_POLL_MS;
           vTaskDelay(pdMS_TO_TICKS(IDLE_POLL_MS));
           continue;
         }
-        size_t to_read = std::min(available, READER_CHUNK_SIZE);
-        size_t read = rb->read(this->read_buf_, to_read, pdMS_TO_TICKS(RB_READ_TIMEOUT_MS));
-        if (read > 0) {
-          audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
-                                      this->parent_->get_actual_sample_rate());
-          this->write_output(this->read_buf_, read, WRITE_TIMEOUT_MS, info);
+        audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
+                                    this->parent_->get_actual_sample_rate());
+        if (size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
+            written > 0) {
+          audio_source->consume(written);
         }
       }
       // Drain timeout expired — signal the main loop to report IDLE.
@@ -232,17 +235,19 @@ void A2DPSinkMediaSource::reader_task_() {
 
 read_chunk:
     {
-      size_t available = rb->available();
+      if (audio_source->available() == 0) {
+        audio_source->fill(pdMS_TO_TICKS(RB_READ_TIMEOUT_MS), false);
+      }
+      size_t available = audio_source->available();
       if (available == 0) {
         vTaskDelay(pdMS_TO_TICKS(IDLE_POLL_MS));
         continue;
       }
-      size_t to_read = std::min(available, READER_CHUNK_SIZE);
-      size_t read = rb->read(this->read_buf_, to_read, pdMS_TO_TICKS(RB_READ_TIMEOUT_MS));
-      if (read > 0) {
-        audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
-                                    this->parent_->get_actual_sample_rate());
-        this->write_output(this->read_buf_, read, WRITE_TIMEOUT_MS, info);
+      audio::AudioStreamInfo info(16, this->parent_->get_actual_channels(),
+                                  this->parent_->get_actual_sample_rate());
+      if (size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
+          written > 0) {
+        audio_source->consume(written);
       }
     }
   }
