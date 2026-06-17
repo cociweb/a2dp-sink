@@ -457,10 +457,6 @@ bool A2DP::init_bt_() {
     // Set IO capabilities to display only (sink has no keyboard)
     esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_OUT;
     esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &iocap, sizeof(esp_bt_io_cap_t));
-
-    // Set authentication mode to require mutual authentication
-    esp_bt_auth_req_t auth_req = ESP_BT_AUTH_REQ_GENERAL;
-    esp_bt_gap_set_security_param(ESP_BT_SP_AUTH_REQ, &auth_req, sizeof(esp_bt_auth_req_t));
   }
 
 #ifdef USE_A2DP_AVRCP
