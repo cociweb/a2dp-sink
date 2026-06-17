@@ -16,6 +16,7 @@ CONF_A2DP_SINK_ID = "a2dp_sink_id"
 CONF_PCM_DRAIN_THROTTLE = "pcm_drain_throttle"
 CONF_SPEAKER_OUTPUT_DELAY = "speaker_output_delay"
 CONF_SPEAKER_PIPELINE_DELAY = "speaker_pipeline_delay"
+CONF_BITS_PER_SAMPLE = "bits_per_sample"
 
 a2dp_sink_ns = cg.esphome_ns.namespace("a2dp_sink")
 A2DPSink = a2dp_sink_ns.class_("A2DPSink", cg.Component, cg.Parented.template(A2DP))
@@ -39,6 +40,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SAMPLE_RATE, default=44100): cv.one_of(
                 8000, 11025, 16000, 22050, 32000, 44100, 48000, int=True
             ),
+            cv.Optional(CONF_BITS_PER_SAMPLE, default=16): cv.one_of(16, 32, int=True),
             cv.Optional(CONF_PCM_DRAIN_THROTTLE, default="500ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_SPEAKER_OUTPUT_DELAY, default="200ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_SPEAKER_PIPELINE_DELAY, default="200ms"): cv.positive_time_period_milliseconds,
@@ -81,6 +83,7 @@ async def to_code(config: ConfigType) -> None:
     await cg.register_parented(var, config[CONF_A2DP_ID])
 
     cg.add(var.set_sample_rate(config[CONF_SAMPLE_RATE]))
+    cg.add(var.set_bits_per_sample(config[CONF_BITS_PER_SAMPLE]))
     cg.add(var.set_pcm_drain_throttle_ms(config[CONF_PCM_DRAIN_THROTTLE].total_milliseconds))
     cg.add(var.set_output_delay_ms(config[CONF_SPEAKER_OUTPUT_DELAY].total_milliseconds))
     cg.add(var.set_pipeline_delay_ms(config[CONF_SPEAKER_PIPELINE_DELAY].total_milliseconds))

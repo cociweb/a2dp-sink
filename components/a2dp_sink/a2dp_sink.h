@@ -29,6 +29,7 @@ class A2DPSink : public Component, public Parented<a2dp::A2DP> {
   // --- Configuration setters ---
 
   void set_sample_rate(uint32_t rate) { this->configured_sample_rate_ = rate; }
+  void set_bits_per_sample(uint32_t bits) { this->configured_bits_per_sample_ = bits; }
   void set_pcm_drain_throttle_ms(uint32_t ms) { this->pcm_drain_throttle_ms_ = ms; }
   void set_output_delay_ms(uint32_t ms) { this->output_delay_ms_ = ms; }
   void set_pipeline_delay_ms(uint32_t ms) { this->pipeline_delay_ms_ = ms; }
@@ -73,6 +74,7 @@ class A2DPSink : public Component, public Parented<a2dp::A2DP> {
  protected:
   // --- Configuration ---
   uint32_t configured_sample_rate_{44100};
+  uint32_t configured_bits_per_sample_{16};
   uint32_t pcm_drain_throttle_ms_{500};
   uint32_t output_delay_ms_{200};
   uint32_t pipeline_delay_ms_{200};

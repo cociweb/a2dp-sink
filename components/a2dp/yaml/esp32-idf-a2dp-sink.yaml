@@ -58,8 +58,8 @@ a2dp:
   discoverable_duration: 3min
   pairing_pin: 1234
   keep_discoverable_after_connect: true
-  preferred_sample_rate: 44100  # auto, 44100, or 48000
-  preferred_bits_per_sample: 16  # A2DP decoded PCM is 16-bit; output conversion may use 32-bit
+  preferred_sample_rate: 48000  # auto, 44100, or 48000
+  preferred_bits_per_sample: 32  # A2DP decoded PCM is 16-bit; output conversion may use 32-bit
   ring_buffer_size: 262144
   use_psram: true
   coexistence:
@@ -71,6 +71,7 @@ a2dp_sink:
   id: a2dp_receiver
   a2dp_id: a2dp_hub
   sample_rate: 44100
+  bits_per_sample: 16
 
 a2dp_avrcp:
   id: avrcp_ctrl
