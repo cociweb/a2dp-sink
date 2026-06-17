@@ -450,8 +450,17 @@ bool A2DP::init_bt_() {
     return false;
   }
   if (this->pairing_pin_len_ > 0) {
+    ESP_LOGI(TAG, "Setting fixed pairing PIN: %s", this->pairing_pin_);
     esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
     esp_bt_gap_set_pin(pin_type, this->pairing_pin_len_, reinterpret_cast<uint8_t *>(this->pairing_pin_));
+
+    // Set IO capabilities to display only (sink has no keyboard)
+    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_OUT;
+    esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &iocap, sizeof(esp_bt_io_cap_t));
+
+    // Set authentication mode to require mutual authentication
+    esp_bt_auth_req_t auth_req = ESP_BT_AUTH_REQ_GENERAL;
+    esp_bt_gap_set_security_param(ESP_BT_SP_AUTH_REQ, &auth_req, sizeof(esp_bt_auth_req_t));
   }
 
 #ifdef USE_A2DP_AVRCP
@@ -640,10 +649,17 @@ void A2DP::handle_gap_event_(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t 
             sizeof(ev.peer_name) - 1);
     ev.peer_name[sizeof(ev.peer_name) - 1] = '\0';
     xQueueSend(this->event_queue_, &ev, 0);
-  } else if (event == ESP_BT_GAP_PIN_REQ_EVT && this->pairing_pin_len_ > 0) {
-    esp_bt_pin_code_t pin_code{};
-    memcpy(pin_code, this->pairing_pin_, this->pairing_pin_len_);
-    esp_bt_gap_pin_reply(param->pin_req.bda, true, this->pairing_pin_len_, pin_code);
+  } else if (event == ESP_BT_GAP_PIN_REQ_EVT) {
+    if (this->pairing_pin_len_ > 0) {
+      char bda[18];
+      format_bda_(param->pin_req.bda, bda, sizeof(bda));
+      ESP_LOGI(TAG, "PIN request from %s, replying with fixed PIN", bda);
+      esp_bt_pin_code_t pin_code{};
+      memcpy(pin_code, this->pairing_pin_, this->pairing_pin_len_);
+      esp_bt_gap_pin_reply(param->pin_req.bda, true, this->pairing_pin_len_, pin_code);
+    } else {
+      ESP_LOGW(TAG, "PIN request received but no pairing_pin configured");
+    }
   }
 }
 
