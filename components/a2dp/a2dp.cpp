@@ -272,7 +272,7 @@ void A2DP::loop() {
                  sbc_channel_mode_name_(ev.channel_mode), (unsigned) ev.block_length, (unsigned) ev.subbands,
                  sbc_allocation_name_(ev.allocation_method), (unsigned) ev.min_bitpool, (unsigned) ev.max_bitpool,
                  (unsigned) ev.bitrate);
-        this->audio_cfg_callback_.call(ev.sample_rate, ev.channels);
+        this->audio_cfg_callback_.call(ev.sample_rate, ev.channels, ev.bitrate, ev.bits_per_sample);
         break;
 
       case A2DPEvent::PEER_NAME_UPDATED:

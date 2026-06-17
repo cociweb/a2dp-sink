@@ -284,7 +284,7 @@ class A2DP : public Component {
   LazyCallbackManager<void(bool)> connection_callback_;
   LazyCallbackManager<void(const char *)> peer_name_callback_;
   LazyCallbackManager<void(bool)> audio_state_callback_;
-  LazyCallbackManager<void(uint16_t, uint8_t)> audio_cfg_callback_;  ///< sample_rate, channels
+  LazyCallbackManager<void(uint16_t, uint8_t, uint32_t, uint8_t)> audio_cfg_callback_;  ///< sample_rate, channels, bitrate, bits_per_sample
 #ifdef USE_A2DP_AVRCP
   LazyCallbackManager<void(uint8_t)> avrcp_volume_callback_;
   LazyCallbackManager<void(bool)> avrcp_ct_state_callback_;

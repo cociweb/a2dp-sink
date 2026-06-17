@@ -14,10 +14,14 @@ void A2DPSink::setup() {
     this->audio_streaming_callback_.call(streaming);
   });
 
-  this->parent_->add_on_audio_cfg_callback([this](uint16_t sample_rate, uint8_t channels) {
+  this->parent_->add_on_audio_cfg_callback([this](uint16_t sample_rate, uint8_t channels, uint32_t bitrate,
+                                                      uint8_t bits_per_sample) {
     this->actual_sample_rate_ = sample_rate;
     this->actual_channels_ = channels;
-    ESP_LOGD(TAG, "Audio config: %u Hz, %u ch", (unsigned) sample_rate, (unsigned) channels);
+    this->actual_bitrate_ = bitrate;
+    this->actual_bits_per_sample_ = bits_per_sample;
+    ESP_LOGD(TAG, "Audio config: %u Hz, %u ch, %u bps, %u-bit", (unsigned) sample_rate, (unsigned) channels,
+             (unsigned) bitrate, (unsigned) bits_per_sample);
   });
 }
 

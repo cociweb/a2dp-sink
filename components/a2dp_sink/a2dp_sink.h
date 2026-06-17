@@ -40,6 +40,8 @@ class A2DPSink : public Component, public Parented<a2dp::A2DP> {
   /// @brief Actual sample rate reported by the A2DP audio config event (thread-safe).
   uint32_t get_actual_sample_rate() const { return this->actual_sample_rate_.load(); }
   uint8_t get_actual_channels() const { return this->actual_channels_.load(); }
+  uint32_t get_actual_bitrate() const { return this->actual_bitrate_.load(); }
+  uint8_t get_actual_bits_per_sample() const { return this->actual_bits_per_sample_.load(); }
 
   uint32_t get_output_delay_ms() const { return this->output_delay_ms_; }
   uint32_t get_pcm_drain_throttle_ms() const { return this->pcm_drain_throttle_ms_; }
@@ -79,6 +81,8 @@ class A2DPSink : public Component, public Parented<a2dp::A2DP> {
   bool audio_streaming_{false};
   std::atomic<uint32_t> actual_sample_rate_{44100};
   std::atomic<uint8_t> actual_channels_{2};
+  std::atomic<uint32_t> actual_bitrate_{0};
+  std::atomic<uint8_t> actual_bits_per_sample_{16};
 
   // --- Callbacks ---
   LazyCallbackManager<void(bool)> audio_streaming_callback_;
