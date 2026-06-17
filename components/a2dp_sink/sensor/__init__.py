@@ -10,8 +10,8 @@ CODEOWNERS = ["@cociweb"]
 DEPENDENCIES = ["a2dp_sink"]
 
 SENSOR_TYPES = {
-    "bitrate": "A2DP_SINK_SENSOR_BITRATE",
-    "bit_depth": "A2DP_SINK_SENSOR_BIT_DEPTH",
+    "bitrate": "esphome::a2dp_sink::A2DP_SINK_SENSOR_BITRATE",
+    "bit_depth": "esphome::a2dp_sink::A2DP_SINK_SENSOR_BIT_DEPTH",
 }
 
 A2DPSinkSensor = a2dp_sink_ns.class_(
