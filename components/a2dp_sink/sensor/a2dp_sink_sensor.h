@@ -12,40 +12,40 @@
 
 namespace esphome::a2dp_sink {
 
-/// @brief Sensor that reports the actual bitrate of the connected A2DP source.
-class A2DPSinkBitrateSensor : public sensor::Sensor, public Component, public Parented<A2DPSink> {
- public:
-  void setup() override {
-    this->parent_->get_parent()->add_on_audio_cfg_callback([this](uint16_t sample_rate, uint8_t channels,
-                                                                     uint32_t bitrate, uint8_t bits_per_sample) {
-      this->publish_state(bitrate);
-    });
-  }
-
-  void dump_config() override {
-    static const char *const TAG = "a2dp_sink.sensor.bitrate";
-    LOG_SENSOR("", "A2DP Sink Bitrate", this);
-  }
-
-  float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
+enum A2DPSinkSensorType {
+  A2DP_SINK_SENSOR_BITRATE,
+  A2DP_SINK_SENSOR_BIT_DEPTH,
 };
 
-/// @brief Sensor that reports the actual bit depth of the connected A2DP source.
-class A2DPSinkBitDepthSensor : public sensor::Sensor, public Component, public Parented<A2DPSink> {
+/// @brief Sensor that reports A2DP audio stream parameters (bitrate or bit depth).
+class A2DPSinkSensor : public sensor::Sensor, public Component, public Parented<A2DPSink> {
  public:
+  void set_sensor_type(A2DPSinkSensorType type) { this->sensor_type_ = type; }
+
   void setup() override {
     this->parent_->get_parent()->add_on_audio_cfg_callback([this](uint16_t sample_rate, uint8_t channels,
                                                                      uint32_t bitrate, uint8_t bits_per_sample) {
-      this->publish_state(bits_per_sample);
+      switch (this->sensor_type_) {
+        case A2DP_SINK_SENSOR_BITRATE:
+          this->publish_state(bitrate);
+          break;
+        case A2DP_SINK_SENSOR_BIT_DEPTH:
+          this->publish_state(bits_per_sample);
+          break;
+      }
     });
   }
 
   void dump_config() override {
-    static const char *const TAG = "a2dp_sink.sensor.bit_depth";
-    LOG_SENSOR("", "A2DP Sink Bit Depth", this);
+    static const char *const TAG = "a2dp_sink.sensor";
+    const char *type_str = this->sensor_type_ == A2DP_SINK_SENSOR_BITRATE ? "bitrate" : "bit_depth";
+    LOG_SENSOR("", "A2DP Sink %s", this, type_str);
   }
 
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
+
+ protected:
+  A2DPSinkSensorType sensor_type_{A2DP_SINK_SENSOR_BITRATE};
 };
 
 }  // namespace esphome::a2dp_sink

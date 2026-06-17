@@ -116,14 +116,18 @@ text_sensor:
 
 sensor:
   - platform: a2dp_sink
-    bitrate_sensor:
-      name: A2DP Bitrate
-      unit_of_measurement: "bps"
-      accuracy_decimals: 0
-    bit_depth_sensor:
-      name: A2DP Bit Depth
-      unit_of_measurement: "bit"
-      accuracy_decimals: 0
+    a2dp_sink_id: a2dp_receiver
+    type: bitrate
+    name: A2DP Bitrate
+    unit_of_measurement: "bps"
+    accuracy_decimals: 0
+
+  - platform: a2dp_sink
+    a2dp_sink_id: a2dp_receiver
+    type: bit_depth
+    name: A2DP Bit Depth
+    unit_of_measurement: "bit"
+    accuracy_decimals: 0
 
   - platform: a2dp
     id: a2dp_track_artist

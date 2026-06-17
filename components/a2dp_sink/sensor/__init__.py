@@ -1,6 +1,7 @@
 import esphome.codegen as cg
 from esphome.components import sensor
 import esphome.config_validation as cv
+from esphome.const import CONF_NAME, CONF_TYPE
 from esphome.types import ConfigType
 
 from .. import CONF_A2DP_SINK_ID, A2DPSink, a2dp_sink_ns
@@ -8,42 +9,28 @@ from .. import CONF_A2DP_SINK_ID, A2DPSink, a2dp_sink_ns
 CODEOWNERS = ["@cociweb"]
 DEPENDENCIES = ["a2dp_sink"]
 
-A2DPSinkBitrateSensor = a2dp_sink_ns.class_(
-    "A2DPSinkBitrateSensor",
+SENSOR_TYPES = {
+    "bitrate": "A2DP_SINK_SENSOR_BITRATE",
+    "bit_depth": "A2DP_SINK_SENSOR_BIT_DEPTH",
+}
+
+A2DPSinkSensor = a2dp_sink_ns.class_(
+    "A2DPSinkSensor",
     sensor.Sensor,
     cg.Component,
 )
 
-A2DPSinkBitDepthSensor = a2dp_sink_ns.class_(
-    "A2DPSinkBitDepthSensor",
-    sensor.Sensor,
-    cg.Component,
-)
-
-CONF_BITRATE_SENSOR = "bitrate_sensor"
-CONF_BIT_DEPTH_SENSOR = "bit_depth_sensor"
-
-SENSOR_SCHEMA = sensor.sensor_schema().extend(
+CONFIG_SCHEMA = sensor.sensor_schema(A2DPSinkSensor).extend(
     {
         cv.GenerateID(CONF_A2DP_SINK_ID): cv.use_id(A2DPSink),
+        cv.Required(CONF_TYPE): cv.one_of(*SENSOR_TYPES, lower=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.Optional(CONF_BITRATE_SENSOR): SENSOR_SCHEMA,
-        cv.Optional(CONF_BIT_DEPTH_SENSOR): SENSOR_SCHEMA,
-    }
-)
-
 
 async def to_code(config: ConfigType) -> None:
-    if CONF_BITRATE_SENSOR in config:
-        var = await sensor.new_sensor(config[CONF_BITRATE_SENSOR])
-        await cg.register_component(var, config[CONF_BITRATE_SENSOR])
-        await cg.register_parented(var, config[CONF_BITRATE_SENSOR][CONF_A2DP_SINK_ID])
-
-    if CONF_BIT_DEPTH_SENSOR in config:
-        var = await sensor.new_sensor(config[CONF_BIT_DEPTH_SENSOR])
-        await cg.register_component(var, config[CONF_BIT_DEPTH_SENSOR])
-        await cg.register_parented(var, config[CONF_BIT_DEPTH_SENSOR][CONF_A2DP_SINK_ID])
+    var = await sensor.new_sensor(config)
+    await cg.register_component(var, config)
+    await cg.register_parented(var, config[CONF_A2DP_SINK_ID])
+    cg.add(var.set_sensor_type(cg.RawExpression(SENSOR_TYPES[config[CONF_TYPE]])))
+    cg.add_define("USE_A2DP_SINK_SENSOR")
