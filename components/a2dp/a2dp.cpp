@@ -454,8 +454,8 @@ bool A2DP::init_bt_() {
     esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
     esp_bt_gap_set_pin(pin_type, this->pairing_pin_len_, reinterpret_cast<uint8_t *>(this->pairing_pin_));
 
-    // Set IO capabilities to display only (sink has no keyboard)
-    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_OUT;
+    // Set IO capabilities to none to force fixed PIN usage
+    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE;
     esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &iocap, sizeof(esp_bt_io_cap_t));
   }
 
