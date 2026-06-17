@@ -39,7 +39,8 @@ class A2DPSinkSensor : public sensor::Sensor, public Component, public Parented<
   void dump_config() override {
     static const char *const TAG = "a2dp_sink.sensor";
     const char *type_str = this->sensor_type_ == A2DP_SINK_SENSOR_BITRATE ? "bitrate" : "bit_depth";
-    LOG_SENSOR("", "A2DP Sink %s", this, type_str);
+    ESP_LOGCONFIG(TAG, "  A2DP Sink %s:", type_str);
+    LOG_SENSOR("", "A2DP Sink", this);
   }
 
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
