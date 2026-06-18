@@ -187,5 +187,8 @@ async def to_code(config: ConfigType) -> None:
     add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", not ble_required)
     add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BLE_ONLY", False)
     add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BTDM", ble_required)
+    if CONF_PAIRING_PIN in config:
+        add_idf_sdkconfig_option("CONFIG_BT_SSP_ENABLED", False)
+        add_idf_sdkconfig_option("CONFIG_BT_LEGACY_PIN_PAIRING_ENABLED", True)
 
     cg.add_define("USE_A2DP")

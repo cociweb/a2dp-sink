@@ -645,7 +645,7 @@ void A2DP::handle_gap_event_(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t 
     if (this->pairing_pin_len_ > 0) {
       char bda[18];
       format_bda_(param->pin_req.bda, bda, sizeof(bda));
-      ESP_LOGI(TAG, "PIN request from %s, replying with fixed PIN", bda);
+      ESP_LOGI(TAG, "PIN request from %s, replying with fixed PIN: %s", bda, this->pairing_pin_);
       esp_bt_pin_code_t pin_code{};
       memcpy(pin_code, this->pairing_pin_, this->pairing_pin_len_);
       esp_bt_gap_pin_reply(param->pin_req.bda, true, this->pairing_pin_len_, pin_code);
