@@ -21,9 +21,18 @@ namespace esphome::a2dp_sink {
 static constexpr uint32_t READER_TASK_STACK = 4096;
 /// @brief Priority for the reader task — above normal but below BT callbacks.
 static constexpr UBaseType_t READER_TASK_PRIORITY = 5;
-/// @brief Chunk size read per iteration in the reader task (bytes).
-/// 2048 == 512 stereo 16-bit frames ≈ 11.5 ms at 44100 Hz.
-static constexpr size_t READER_CHUNK_SIZE = 2048;
+/// @brief Soft cap on bytes acquired (and written downstream) per reader-task iteration.
+/// 8192 == 2048 stereo 16-bit frames ≈ 46 ms at 44100 Hz.
+///
+/// This bounds the reader's throughput ceiling: each loop iteration exposes at most this
+/// many bytes from the ring buffer (RingBufferAudioSource::fill soft cap) and hands them to
+/// write_output(), so the maximum drain rate is loop_rate × READER_CHUNK_SIZE. At 44100 Hz
+/// stereo 16-bit the source produces ~172 KB/s, which needs ~84 writes/s at 2048 bytes — right
+/// at the loop-rate ceiling once per-iteration overhead is included, so the ring buffer slowly
+/// fills, latency grows and audio stutters. A larger chunk amortises the per-iteration overhead
+/// over more data, giving comfortable headroom above real time so the reader keeps the buffer
+/// drained. The value only caps a zero-copy view into the ring buffer, so it costs no extra RAM.
+static constexpr size_t READER_CHUNK_SIZE = 8192;
 /// @brief Max milliseconds the ring buffer will block waiting for data.
 static constexpr uint32_t RB_READ_TIMEOUT_MS = 20;
 /// @brief Timeout (ms) passed to write_output() per call.
