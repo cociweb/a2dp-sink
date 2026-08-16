@@ -24,6 +24,9 @@
 #include "esp_bt_device.h"
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
+#ifdef USE_SOFTWARE_COEXISTENCE
+#include "esp_wifi_types.h"
+#endif
 
 namespace esphome::a2dp {
 
@@ -269,6 +272,10 @@ class A2DP : public Component {
   bool prefer_bt_while_streaming_{true};
   bool prefer_bt_while_discoverable_{false};
   bool pause_wifi_sources_on_connect_{false};
+  /// @brief Wi-Fi power-save mode captured before BT was prioritised, so it can be restored.
+  wifi_ps_type_t saved_wifi_ps_{WIFI_PS_MIN_MODEM};
+  /// @brief True while saved_wifi_ps_ holds a mode to restore (BT is currently prioritised).
+  bool wifi_ps_saved_{false};
 #endif
 
   // --- Runtime state ---

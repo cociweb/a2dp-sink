@@ -9,9 +9,8 @@
 
 #include "esp_heap_caps.h"
 
-#if defined(CONFIG_BTDM_CONTROLLER_MODEM_SLEEP_EXT_WAKEUP) || defined(CONFIG_BTDM_COEX_SUPPORT)
-#include "esp_coexist.h"
-#define HAS_COEX_API
+#ifdef USE_SOFTWARE_COEXISTENCE
+#include "esp_wifi.h"
 #endif
 
 static const char *const TAG = "a2dp";
@@ -608,12 +607,33 @@ void A2DP::save_peer_(const esp_bd_addr_t remote_bda) {
 // ---------------------------------------------------------------------------
 
 void A2DP::set_coex_preference_(bool prefer_bt) {
-#ifdef HAS_COEX_API
-  esp_coex_preference_t pref = prefer_bt ? ESP_COEX_PREFER_BT : ESP_COEX_PREFER_WIFI;
-  esp_err_t ret = esp_coex_preference_set(pref);
-  if (ret != ESP_OK) {
-    ESP_LOGW(TAG, "esp_coex_preference_set failed: %s", esp_err_to_name(ret));
+#ifdef USE_SOFTWARE_COEXISTENCE
+  // The ESP32 shares a single 2.4 GHz radio between Wi-Fi and Bluetooth. With Wi-Fi
+  // power-save (modem sleep) enabled — the ESP-IDF default — the radio periodically
+  // parks on Wi-Fi, starving the realtime A2DP link and producing controller-level
+  // packet loss ("BT_APPL: Pkt dropped" / "Sequence numbers error") and audio drops.
+  // Prioritising BT therefore means disabling Wi-Fi power-save for the duration, and
+  // restoring the previously configured mode once BT no longer needs the airtime.
+  // (The legacy esp_coex_preference_set() API this used to call is a deprecated no-op
+  // on current ESP-IDF, so "prefer BT while streaming" never actually took effect.)
+  if (prefer_bt) {
+    if (!this->wifi_ps_saved_) {
+      if (esp_wifi_get_ps(&this->saved_wifi_ps_) == ESP_OK)
+        this->wifi_ps_saved_ = true;
+    }
+    if (this->saved_wifi_ps_ != WIFI_PS_NONE) {
+      esp_err_t ret = esp_wifi_set_ps(WIFI_PS_NONE);
+      if (ret != ESP_OK && ret != ESP_ERR_WIFI_NOT_INIT)
+        ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s", esp_err_to_name(ret));
+    }
+  } else if (this->wifi_ps_saved_) {
+    esp_err_t ret = esp_wifi_set_ps(this->saved_wifi_ps_);
+    if (ret != ESP_OK && ret != ESP_ERR_WIFI_NOT_INIT)
+      ESP_LOGW(TAG, "esp_wifi_set_ps(restore) failed: %s", esp_err_to_name(ret));
+    this->wifi_ps_saved_ = false;
   }
+#else
+  (void) prefer_bt;
 #endif
 }
 
