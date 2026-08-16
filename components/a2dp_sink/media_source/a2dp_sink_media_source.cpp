@@ -45,6 +45,11 @@ void A2DPSinkMediaSource::setup() {
       xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN | EVT_CMD_PAUSE);
       xEventGroupSetBits(this->event_group_, EVT_CMD_START);
     } else {
+      // Clear EVT_CMD_START so the reader's drain branch does not immediately
+      // mistake the still-set start bit for a stream resume: leaving it set would
+      // cancel the drain every iteration, so the task would never finish draining,
+      // never suspend, and instead spin on the empty ring buffer counting underruns.
+      xEventGroupClearBits(this->event_group_, EVT_CMD_START);
       xEventGroupSetBits(this->event_group_, EVT_CMD_DRAIN);
     }
   });
