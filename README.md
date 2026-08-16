@@ -192,6 +192,21 @@ keep that path healthy and make stutter observable instead of guesswork:
 - **Keep the Bluetooth stack in internal SRAM.** Leave `bt_allocation_in_psram: false`
   (the default). Forcing BT allocations into PSRAM adds bus latency/contention on the
   realtime path.
+- **Give Bluetooth the radio while streaming.** The ESP32 shares a single 2.4 GHz
+  radio between Wi-Fi and Bluetooth. With Wi-Fi power-save (modem sleep) enabled — the
+  ESP-IDF default — the radio periodically parks on Wi-Fi and starves the realtime
+  A2DP link, which shows up as controller-level packet loss in the log
+  (`BT_APPL: Pkt dropped`, `Sequence numbers error`) together with rising `underruns`
+  and a ring buffer that never fills. Enable the coexistence block and keep
+  `prefer_bt_while_streaming: true` (the default) so the component disables Wi-Fi
+  power-save while audio is streaming and restores your configured mode afterwards:
+
+  ```yaml
+  a2dp:
+    coexistence:
+      software_coexistence: true
+      prefer_bt_while_streaming: true
+  ```
 - **Size the ring buffer for latency, not for hiding drops.** A larger buffer only
   masks a pacing problem while adding seconds of latency and a large post-pause
   backlog. Prefer a modest buffer plus the diagnostics below to find the real cause.
