@@ -18,7 +18,7 @@
 namespace esphome::a2dp_sink {
 
 /// @brief FreeRTOS task stack size (bytes) for the ring-buffer reader task.
-static constexpr uint32_t READER_TASK_STACK = 3072;
+static constexpr uint32_t READER_TASK_STACK = 4096;
 /// @brief Priority for the reader task — above normal but below BT callbacks.
 static constexpr UBaseType_t READER_TASK_PRIORITY = 5;
 /// @brief Chunk size read per iteration in the reader task (bytes).
@@ -92,6 +92,21 @@ class A2DPSinkMediaSource : public Component,
   static void s_reader_task_(void *arg);
   /// @brief The reader task body.
   void reader_task_();
+
+  /// @brief Result of the pre-roll (jitter buffer priming) wait.
+  enum class PrerollResult {
+    PROCEED,  ///< Target reached, timed out, or streaming stopped — continue the read loop.
+    STOP,     ///< EVT_CMD_STOP was signalled — the task must exit without reporting IDLE.
+  };
+
+  /// @brief Block until the ring buffer holds @p output_delay_ms worth of PCM.
+  ///
+  /// Builds a jitter buffer so the speaker pipeline has headroom to absorb BT
+  /// sniff cycles, WiFi roam scans, and PSRAM latency. Time spent waiting while
+  /// the buffer is empty (e.g. before Bluetooth starts streaming) is not counted
+  /// against the fill timeout, so the gate keeps waiting for the stream to begin
+  /// but cannot hang forever once data is actually flowing. Abortable by STOP.
+  PrerollResult wait_for_preroll_(uint32_t output_delay_ms);
 
   /// @brief Start the reader task (idempotent).
   void start_task_();
