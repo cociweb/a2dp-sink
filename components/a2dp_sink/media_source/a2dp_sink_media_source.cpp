@@ -88,6 +88,26 @@ void A2DPSinkMediaSource::loop() {
       this->pending_stop_ = false;
     }
   }
+
+  if (this->debug_logging_) {
+    uint32_t now = millis();
+    if ((now - this->diag_last_log_at_) >= DIAG_LOG_INTERVAL_MS) {
+      uint32_t interval_ms = now - this->diag_last_log_at_;
+      this->diag_last_log_at_ = now;
+      uint32_t loops = this->diag_loops_.load(std::memory_order_relaxed);
+      uint32_t loop_rate = interval_ms > 0 ? ((loops - this->diag_prev_loops_) * 1000) / interval_ms : 0;
+      this->diag_prev_loops_ = loops;
+      uint32_t stack_free = this->diag_min_stack_free_.load(std::memory_order_relaxed);
+      if (stack_free == 0xFFFFFFFFu)
+        stack_free = 0;  // Reader task has not run yet.
+      ESP_LOGD(TAG,
+               "reader diag: loop_rate=%u/s underruns=%u partial_writes=%u written=%llu KB min_stack_free=%u B",
+               (unsigned) loop_rate, (unsigned) this->diag_underruns_.load(std::memory_order_relaxed),
+               (unsigned) this->diag_partial_writes_.load(std::memory_order_relaxed),
+               (unsigned long long) (this->diag_written_bytes_.load(std::memory_order_relaxed) / 1024),
+               (unsigned) stack_free);
+    }
+  }
 }
 
 void A2DPSinkMediaSource::dump_config() {
@@ -220,6 +240,14 @@ void A2DPSinkMediaSource::reader_task_() {
 
   // Main read loop.
   while (true) {
+    if (this->debug_logging_) {
+      this->diag_loops_.fetch_add(1, std::memory_order_relaxed);
+      uint32_t stack_free = uxTaskGetStackHighWaterMark(nullptr);
+      uint32_t prev = this->diag_min_stack_free_.load(std::memory_order_relaxed);
+      while (stack_free < prev &&
+             !this->diag_min_stack_free_.compare_exchange_weak(prev, stack_free, std::memory_order_relaxed)) {
+      }
+    }
     EventBits_t bits = xEventGroupGetBits(this->event_group_);
 
     if (bits & EVT_CMD_STOP)
@@ -285,6 +313,8 @@ read_chunk:
       }
       size_t available = audio_source->available();
       if (available == 0) {
+        if (this->debug_logging_)
+          this->diag_underruns_.fetch_add(1, std::memory_order_relaxed);
         vTaskDelay(pdMS_TO_TICKS(IDLE_POLL_MS));
         continue;
       }
@@ -295,6 +325,11 @@ read_chunk:
       size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
       if (written > 0) {
         zero_write_count = 0;
+        if (this->debug_logging_) {
+          this->diag_written_bytes_.fetch_add(written, std::memory_order_relaxed);
+          if (written < available)
+            this->diag_partial_writes_.fetch_add(1, std::memory_order_relaxed);
+        }
         audio_source->consume(written);
       } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
         this->parent_->get_parent()->set_audio_output_enabled(false);

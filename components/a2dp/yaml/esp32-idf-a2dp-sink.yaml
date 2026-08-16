@@ -58,10 +58,17 @@ a2dp:
   discoverable_duration: 3min
   pairing_pin: 1234
   keep_discoverable_after_connect: true
-  preferred_sample_rate: 48000  # auto, 44100, or 48000
+  # Most phones negotiate A2DP/SBC at 44100 Hz — prefer it so the output chain
+  # does not have to resample. Options: auto, 44100, or 48000.
+  preferred_sample_rate: 44100
   preferred_bits_per_sample: 32  # A2DP decoded PCM is 16-bit; output conversion may use 32-bit
   ring_buffer_size: 262144
   use_psram: true
+  # Keep the Bluetooth stack in internal SRAM (off the slower PSRAM bus) for the
+  # realtime audio path. Set true only if internal RAM runs out.
+  bt_allocation_in_psram: false
+  # Low-frequency (~10s) diagnostics: ring-buffer fill, drops, heap. See README.
+  diagnostics: true
   coexistence:
     software_coexistence: true
     prefer_bt_while_streaming: true
@@ -71,7 +78,6 @@ a2dp_sink:
   id: a2dp_receiver
   a2dp_id: a2dp_hub
   sample_rate: 44100
-  bits_per_sample: 16bit
   bits_per_sample: 16
 
 a2dp_avrcp:
@@ -87,6 +93,7 @@ media_source:
     id: a2dp_media_source
     a2dp_sink_id: a2dp_receiver
     task_stack_in_psram: true
+    debug_logging: true  # reader-task diagnostics (~10s): loop rate, underruns, partial writes
 
 media_player:
   - platform: speaker_source

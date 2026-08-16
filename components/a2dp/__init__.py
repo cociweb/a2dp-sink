@@ -23,6 +23,8 @@ CONF_KEEP_DISCOVERABLE_AFTER_CONNECT = "keep_discoverable_after_connect"
 CONF_PAIRING_PIN = "pairing_pin"
 CONF_PREFERRED_SAMPLE_RATE = "preferred_sample_rate"
 CONF_PREFERRED_BITS_PER_SAMPLE = "preferred_bits_per_sample"
+CONF_BT_ALLOCATION_IN_PSRAM = "bt_allocation_in_psram"
+CONF_DIAGNOSTICS = "diagnostics"
 CONF_COEXISTENCE = "coexistence"
 CONF_SOFTWARE_COEXISTENCE = "software_coexistence"
 CONF_PREFER_BT_WHILE_STREAMING = "prefer_bt_while_streaming"
@@ -99,6 +101,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PREFERRED_BITS_PER_SAMPLE, default=16): cv.one_of(
                 16, 32, int=True
             ),
+            cv.Optional(CONF_BT_ALLOCATION_IN_PSRAM, default=False): cv.boolean,
+            cv.Optional(CONF_DIAGNOSTICS, default=False): cv.boolean,
             cv.Optional(CONF_COEXISTENCE): COEXISTENCE_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
@@ -159,6 +163,7 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_ring_buffer_size(config[CONF_RING_BUFFER_SIZE]))
     cg.add(var.set_use_psram(config[CONF_USE_PSRAM]))
     cg.add(var.set_preferred_bits_per_sample(config[CONF_PREFERRED_BITS_PER_SAMPLE]))
+    cg.add(var.set_diagnostics_enabled(config[CONF_DIAGNOSTICS]))
     if config[CONF_PREFERRED_SAMPLE_RATE] != "auto":
         cg.add_build_flag(
             f"-DBTC_AV_SBC_DEFAULT_SAMP_FREQ={SAMPLE_RATE_BUILD_FLAGS[config[CONF_PREFERRED_SAMPLE_RATE]]}"
@@ -181,7 +186,12 @@ async def to_code(config: ConfigType) -> None:
     add_idf_sdkconfig_option("CONFIG_BT_A2DP_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_TG_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_CT_ENABLE", True)
-    add_idf_sdkconfig_option("CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST", True)
+    # Keep Bluetooth stack allocations in internal SRAM by default. Forcing them into
+    # PSRAM (SPIRAM_FIRST) adds latency/contention on the realtime A2DP path and is a
+    # known contributor to audio stutter; only enable it if internal RAM is exhausted.
+    add_idf_sdkconfig_option(
+        "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST", config[CONF_BT_ALLOCATION_IN_PSRAM]
+    )
     add_idf_sdkconfig_option("CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY", True)
     add_idf_sdkconfig_option("CONFIG_BT_BLE_ENABLED", ble_required)
     add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", not ble_required)

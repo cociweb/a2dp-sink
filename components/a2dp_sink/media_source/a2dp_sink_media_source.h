@@ -31,6 +31,8 @@ static constexpr uint32_t WRITE_TIMEOUT_MS = 100;
 /// @brief Polling interval (ms) when idle / draining.
 static constexpr uint32_t IDLE_POLL_MS = 10;
 static constexpr uint8_t ZERO_WRITE_STOP_COUNT = 3;
+/// @brief Interval (ms) between low-frequency reader-task diagnostics log lines.
+static constexpr uint32_t DIAG_LOG_INTERVAL_MS = 10000;
 
 // --- Event bits: main loop → reader task ---
 static constexpr EventBits_t EVT_CMD_START = BIT0;  ///< play_uri / resume
@@ -78,6 +80,7 @@ class A2DPSinkMediaSource : public Component,
   void dump_config() override;
 
   void set_task_stack_in_psram(bool v) { this->task_stack_in_psram_ = v; }
+  void set_debug_logging(bool v) { this->debug_logging_ = v; }
 
   // --- MediaSource interface ---
   bool play_uri(const std::string &uri) override;
@@ -97,6 +100,16 @@ class A2DPSinkMediaSource : public Component,
   EventGroupHandle_t event_group_{nullptr};
   bool task_stack_in_psram_{false};
   bool pending_stop_{false};
+
+  // --- Diagnostics (reader task → main loop) ---
+  bool debug_logging_{false};
+  std::atomic<uint32_t> diag_underruns_{0};       ///< Times the ring buffer was empty while playing.
+  std::atomic<uint32_t> diag_partial_writes_{0};  ///< write_output() accepted fewer bytes than offered.
+  std::atomic<uint32_t> diag_loops_{0};           ///< Reader-task main-loop iterations (for loop rate).
+  std::atomic<uint64_t> diag_written_bytes_{0};   ///< Total PCM bytes handed to the speaker pipeline.
+  std::atomic<uint32_t> diag_min_stack_free_{0xFFFFFFFFu};  ///< Min reader-task stack watermark (bytes).
+  uint32_t diag_last_log_at_{0};
+  uint32_t diag_prev_loops_{0};
 };
 
 }  // namespace esphome::a2dp_sink

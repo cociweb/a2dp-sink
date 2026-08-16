@@ -60,6 +60,8 @@ a2dp:
 - **use_psram** (*Optional*, default `false`): Prefer PSRAM for the PCM ring buffer.
 - **preferred_sample_rate** (*Optional*, default `auto`): Preferred SBC sample rate. Supported values are `auto`, `44100`, and `48000`.
 - **preferred_bits_per_sample** (*Optional*, default `16`): Output PCM width used by the media source path. Supported values are `16` and `32`.
+- **bt_allocation_in_psram** (*Optional*, default `false`): When `false`, Bluetooth stack allocations stay in internal SRAM (`CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=n`). This keeps the realtime A2DP path off the slower PSRAM bus and helps avoid audio stutter. Set to `true` only if internal RAM is exhausted.
+- **diagnostics** (*Optional*, default `false`): Emit a low-frequency (~10s) debug log line with ring-buffer fill level, high-water mark, bytes received, dropped/overflow bytes, and free internal/PSRAM heap. Useful for isolating realtime audio problems without per-packet logging.
 - **coexistence** (*Optional*): Wi-Fi/Bluetooth coexistence tuning.
 
 #### Automations
@@ -106,6 +108,7 @@ media_source:
     id: a2dp_media_source
     a2dp_sink_id: a2dp_receiver
     task_stack_in_psram: true
+    debug_logging: false
 
 binary_sensor:
   - platform: a2dp_sink
@@ -173,6 +176,39 @@ Supported types:
 - `artist`
 - `album`
 - `album_artist` *(accepted for YAML compatibility, but AVRCP does not expose a standard album artist attribute through this ESP-IDF API)*
+
+## Realtime audio tuning & diagnostics
+
+Bluetooth A2DP is a realtime source: decoded PCM arrives from the phone at a fixed
+rate and must reach I2S with bounded latency. A few settings and diagnostics help
+keep that path healthy and make stutter observable instead of guesswork:
+
+- **Match the negotiated sample rate.** Most phones negotiate A2DP/SBC at
+  `44100 Hz`. Configure `a2dp_sink: sample_rate: 44100` and, ideally, run the whole
+  speaker/I2S chain at 44100 Hz (the TAS5805M supports 44.1 kHz) so no resampling
+  is needed. If the output must stay at 48000 Hz, keep the resampler stage but be
+  aware it adds realtime work. You can also nudge SBC negotiation with
+  `a2dp: preferred_sample_rate: 44100`.
+- **Keep the Bluetooth stack in internal SRAM.** Leave `bt_allocation_in_psram: false`
+  (the default). Forcing BT allocations into PSRAM adds bus latency/contention on the
+  realtime path.
+- **Size the ring buffer for latency, not for hiding drops.** A larger buffer only
+  masks a pacing problem while adding seconds of latency and a large post-pause
+  backlog. Prefer a modest buffer plus the diagnostics below to find the real cause.
+- **Enable diagnostics while investigating.** Set `a2dp: diagnostics: true` and
+  `media_source: … debug_logging: true`. Roughly every 10 seconds the log then shows:
+
+  - hub: ring-buffer fill %, high-water mark, total bytes received, dropped/overflow
+    bytes (audio silently discarded because the buffer was full), free internal heap,
+    free PSRAM;
+  - reader task: loop rate, underrun count (buffer empty while playing), partial-write
+    count, total bytes written to the speaker pipeline, and the minimum task stack
+    watermark.
+
+  Rising `dropped` bytes point to the producer overrunning a too-small/too-slow
+  consumer; rising `underruns` point to the consumer starving (RF loss, downstream
+  backpressure, or resampler/mixer stalls). These counters isolate whether the
+  bottleneck is upstream (Bluetooth) or downstream (speaker pipeline).
 
 ## Complete example
 

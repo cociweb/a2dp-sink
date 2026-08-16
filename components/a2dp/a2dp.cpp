@@ -7,6 +7,8 @@
 #include <cstring>
 #include <memory>
 
+#include "esp_heap_caps.h"
+
 #if defined(CONFIG_BTDM_CONTROLLER_MODEM_SLEEP_EXT_WAKEUP) || defined(CONFIG_BTDM_COEX_SUPPORT)
 #include "esp_coexist.h"
 #define HAS_COEX_API
@@ -27,6 +29,7 @@ static constexpr uint32_t A2DP_PEER_PREF_HASH = 0xA2D90001UL;
 static constexpr uint32_t RECONNECT_INITIAL_DELAY_MS = 1000;
 static constexpr uint32_t RECONNECT_RETRY_DELAY_MS = 1000;
 static constexpr uint8_t RECONNECT_MAX_ATTEMPTS = 5;
+static constexpr uint32_t DIAGNOSTICS_LOG_INTERVAL_MS = 10000;
 
 static void format_bda_(const esp_bd_addr_t bda, char *buf, size_t len) {
   snprintf(buf, len, "%02X:%02X:%02X:%02X:%02X:%02X", bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
@@ -200,6 +203,22 @@ void A2DP::loop() {
   }
 #endif
 
+  if (this->diagnostics_enabled_ && (millis() - this->diag_last_log_at_) >= DIAGNOSTICS_LOG_INTERVAL_MS) {
+    this->diag_last_log_at_ = millis();
+    size_t fill = this->get_ring_buffer_fill();
+    size_t hw = this->diag_fill_high_water_.load(std::memory_order_relaxed);
+    size_t cap = this->ring_buffer_size_ > 0 ? this->ring_buffer_size_ : 1;
+    ESP_LOGD(TAG,
+             "diag: streaming=%s fill=%u/%u B (%u%%) hw=%u B rx=%llu KB dropped=%llu KB | "
+             "heap_internal=%u B psram=%u B",
+             this->audio_streaming_ ? "yes" : "no", (unsigned) fill, (unsigned) this->ring_buffer_size_,
+             (unsigned) ((fill * 100) / cap), (unsigned) hw,
+             (unsigned long long) (this->diag_bytes_received_.load(std::memory_order_relaxed) / 1024),
+             (unsigned long long) (this->diag_bytes_dropped_.load(std::memory_order_relaxed) / 1024),
+             (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  }
+
   A2DPEventRecord ev;
   while (xQueueReceive(this->event_queue_, &ev, 0) == pdTRUE) {
     switch (ev.type) {
@@ -328,6 +347,7 @@ void A2DP::dump_config() {
   ESP_LOGCONFIG(TAG, "  Auto Start:    %s", this->auto_start_ ? "yes" : "no");
   ESP_LOGCONFIG(TAG, "  Reconnect:     %s", this->auto_reconnect_ ? "yes" : "no");
   ESP_LOGCONFIG(TAG, "  Preferred PCM: %u-bit", (unsigned) this->preferred_bits_per_sample_);
+  ESP_LOGCONFIG(TAG, "  Diagnostics:   %s", this->diagnostics_enabled_ ? "enabled" : "disabled");
 #ifdef USE_SOFTWARE_COEXISTENCE
   if (this->software_coexistence_) {
     ESP_LOGCONFIG(TAG, "  Coexistence:   software");
@@ -629,8 +649,29 @@ void A2DP::handle_a2d_event_(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param
 }
 
 void A2DP::handle_audio_data_(const uint8_t *data, uint32_t len) {
-  if (this->audio_output_enabled_.load(std::memory_order_relaxed) && this->ring_buffer_ != nullptr)
-    this->ring_buffer_->write(data, len);
+  if (!this->audio_output_enabled_.load(std::memory_order_relaxed) || this->ring_buffer_ == nullptr)
+    return;
+
+  // Determine how much of this packet will be dropped due to overflow before
+  // writing. RingBuffer::write() makes room by discarding the OLDEST queued PCM,
+  // so a full buffer silently drops audio — track it so stutter is observable.
+  if (this->diagnostics_enabled_) {
+    size_t free_before = this->ring_buffer_->free();
+    if (free_before < len)
+      this->diag_bytes_dropped_.fetch_add(len - free_before, std::memory_order_relaxed);
+    this->diag_bytes_received_.fetch_add(len, std::memory_order_relaxed);
+  }
+
+  this->ring_buffer_->write(data, len);
+
+  if (this->diagnostics_enabled_) {
+    size_t fill = this->ring_buffer_->available();
+    // Monotonic high-water update (relaxed CAS loop; contention here is negligible).
+    size_t hw = this->diag_fill_high_water_.load(std::memory_order_relaxed);
+    while (fill > hw &&
+           !this->diag_fill_high_water_.compare_exchange_weak(hw, fill, std::memory_order_relaxed)) {
+    }
+  }
 }
 
 void A2DP::handle_gap_event_(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param) {
