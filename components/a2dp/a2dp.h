@@ -261,6 +261,8 @@ class A2DP : public Component {
   bool has_last_peer_{false};
   uint32_t reconnect_at_{0};
   uint8_t reconnect_attempts_{0};
+  /// @brief True if audio was streaming when the link dropped — resume playback on reconnect.
+  bool resume_playback_on_reconnect_{false};
 
 #ifdef USE_SOFTWARE_COEXISTENCE
   bool software_coexistence_{false};

@@ -27,7 +27,10 @@ struct SavedPeer {
 
 static constexpr uint32_t A2DP_PEER_PREF_HASH = 0xA2D90001UL;
 static constexpr uint32_t RECONNECT_INITIAL_DELAY_MS = 1000;
-static constexpr uint32_t RECONNECT_RETRY_DELAY_MS = 1000;
+// Spacing between reconnect attempts. Long enough for an in-flight connection
+// attempt to complete before the next one is issued, so retries don't spam the
+// controller with ESP_ERR_INVALID_STATE while a connect is still in progress.
+static constexpr uint32_t RECONNECT_RETRY_DELAY_MS = 3000;
 static constexpr uint8_t RECONNECT_MAX_ATTEMPTS = 5;
 static constexpr uint32_t DIAGNOSTICS_LOG_INTERVAL_MS = 10000;
 
@@ -241,6 +244,7 @@ void A2DP::loop() {
 
       case A2DPEvent::DISCONNECTED:
         if (this->connected_) {
+          bool was_streaming = this->audio_streaming_;
           this->connected_ = false;
           this->audio_streaming_ = false;
           this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
@@ -251,6 +255,15 @@ void A2DP::loop() {
 #endif
           this->connection_callback_.call(false);
           this->audio_state_callback_.call(false);
+          // Proactively reconnect after an unexpected link loss (e.g. supervision
+          // timeout during WiFi activity) instead of passively waiting for the
+          // source. Remember whether audio was playing so it can be resumed.
+          if (this->enabled_ && this->auto_reconnect_ && this->has_last_peer_) {
+            this->resume_playback_on_reconnect_ = was_streaming;
+            this->reconnect_attempts_ = 0;
+            this->reconnect_at_ = millis() + RECONNECT_INITIAL_DELAY_MS;
+            ESP_LOGI(TAG, "Will attempt to reconnect to last source");
+          }
           this->start_discovery_();
         }
         break;
@@ -258,6 +271,9 @@ void A2DP::loop() {
       case A2DPEvent::AUDIO_STARTED:
         if (!this->audio_streaming_) {
           this->audio_streaming_ = true;
+          // Playback resumed (either the source restarted on its own or via the
+          // AVRCP PLAY we sent on reconnect) — no further resume action needed.
+          this->resume_playback_on_reconnect_ = false;
           ESP_LOGI(TAG, "A2DP audio started");
 #ifdef USE_SOFTWARE_COEXISTENCE
           if (this->software_coexistence_ && this->prefer_bt_while_streaming_)
@@ -314,6 +330,13 @@ void A2DP::loop() {
         this->avrcp_ct_state_callback_.call(true);
         this->request_avrcp_metadata();
         this->request_avrcp_track_change_notification();
+        // If audio was playing when the link dropped and the source did not
+        // resume on its own, ask it to resume now that control is back up.
+        if (this->resume_playback_on_reconnect_ && !this->audio_streaming_) {
+          ESP_LOGI(TAG, "Resuming playback after reconnect");
+          this->send_avrc_passthrough(ESP_AVRC_PT_CMD_PLAY);
+        }
+        this->resume_playback_on_reconnect_ = false;
         break;
 
       case A2DPEvent::AVRCP_CT_DISCONNECTED:
@@ -555,12 +578,18 @@ void A2DP::reconnect_to_last_peer_() {
   esp_err_t ret = esp_a2d_sink_connect(this->last_peer_bda_);
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "Reconnect to %s failed to start: %s", bda, esp_err_to_name(ret));
-    if (ret == ESP_ERR_INVALID_STATE && this->reconnect_attempts_ < RECONNECT_MAX_ATTEMPTS) {
-      this->reconnect_at_ = millis() + RECONNECT_RETRY_DELAY_MS;
-    }
-    return;
+  } else {
+    ESP_LOGI(TAG, "Reconnect to last A2DP source requested: %s (attempt %u/%u)", bda,
+             (unsigned) this->reconnect_attempts_, (unsigned) RECONNECT_MAX_ATTEMPTS);
   }
-  ESP_LOGI(TAG, "Reconnect to last A2DP source requested: %s", bda);
+  // Schedule another attempt while retries remain. A successful CONNECTED event
+  // cancels this by clearing reconnect_at_ and resetting the attempt counter, so
+  // this only keeps firing until the link is actually restored (or attempts run out).
+  if (this->reconnect_attempts_ < RECONNECT_MAX_ATTEMPTS) {
+    this->reconnect_at_ = millis() + RECONNECT_RETRY_DELAY_MS;
+  } else if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Giving up reconnect after %u attempts", (unsigned) this->reconnect_attempts_);
+  }
 }
 
 void A2DP::save_peer_(const esp_bd_addr_t remote_bda) {
