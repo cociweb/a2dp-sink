@@ -1,7 +1,7 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_SAMPLE_RATE
+from esphome.const import CONF_ID, CONF_SAMPLE_RATE, CONF_TRIGGER_ID
 from esphome.components.a2dp import CONF_A2DP_ID, A2DP
 from esphome.core import ID
 from esphome.cpp_generator import TemplateArgsType
@@ -17,6 +17,8 @@ CONF_PCM_DRAIN_THROTTLE = "pcm_drain_throttle"
 CONF_SPEAKER_OUTPUT_DELAY = "speaker_output_delay"
 CONF_SPEAKER_PIPELINE_DELAY = "speaker_pipeline_delay"
 CONF_BITS_PER_SAMPLE = "bits_per_sample"
+CONF_ON_AUDIO_START = "on_audio_start"
+CONF_ON_AUDIO_STOP = "on_audio_stop"
 
 a2dp_sink_ns = cg.esphome_ns.namespace("a2dp_sink")
 A2DPSink = a2dp_sink_ns.class_("A2DPSink", cg.Component, cg.Parented.template(A2DP))
@@ -32,6 +34,13 @@ A2DPSinkDisableAction = a2dp_sink_ns.class_(
     cg.Parented.template(A2DPSink),
 )
 
+A2DPSinkAudioStartTrigger = a2dp_sink_ns.class_(
+    "A2DPSinkAudioStartTrigger", automation.Trigger.template()
+)
+A2DPSinkAudioStopTrigger = a2dp_sink_ns.class_(
+    "A2DPSinkAudioStopTrigger", automation.Trigger.template()
+)
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -44,6 +53,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PCM_DRAIN_THROTTLE, default="500ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_SPEAKER_OUTPUT_DELAY, default="200ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_SPEAKER_PIPELINE_DELAY, default="200ms"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_ON_AUDIO_START): automation.validate_automation(
+                {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(A2DPSinkAudioStartTrigger)}
+            ),
+            cv.Optional(CONF_ON_AUDIO_STOP): automation.validate_automation(
+                {cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(A2DPSinkAudioStopTrigger)}
+            ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     cv.only_on_esp32,
@@ -87,5 +102,12 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_pcm_drain_throttle_ms(config[CONF_PCM_DRAIN_THROTTLE].total_milliseconds))
     cg.add(var.set_output_delay_ms(config[CONF_SPEAKER_OUTPUT_DELAY].total_milliseconds))
     cg.add(var.set_pipeline_delay_ms(config[CONF_SPEAKER_PIPELINE_DELAY].total_milliseconds))
+
+    for conf in config.get(CONF_ON_AUDIO_START, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [], conf)
+    for conf in config.get(CONF_ON_AUDIO_STOP, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [], conf)
 
     cg.add_define("USE_A2DP_SINK")

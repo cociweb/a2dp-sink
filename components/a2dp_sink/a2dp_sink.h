@@ -104,6 +104,30 @@ class A2DPSinkDisableAction : public Action<Ts...>, public Parented<A2DPSink> {
   void play(const Ts &...x) override { this->parent_->get_parent()->disable(); }
 };
 
+// --- Automation triggers ---
+
+/// @brief Fires when the Bluetooth source starts streaming audio ("A2DP audio started").
+class A2DPSinkAudioStartTrigger : public Trigger<> {
+ public:
+  explicit A2DPSinkAudioStartTrigger(A2DPSink *parent) {
+    parent->add_on_audio_streaming_callback([this](bool streaming) {
+      if (streaming)
+        this->trigger();
+    });
+  }
+};
+
+/// @brief Fires when the Bluetooth source stops streaming audio ("A2DP audio stopped").
+class A2DPSinkAudioStopTrigger : public Trigger<> {
+ public:
+  explicit A2DPSinkAudioStopTrigger(A2DPSink *parent) {
+    parent->add_on_audio_streaming_callback([this](bool streaming) {
+      if (!streaming)
+        this->trigger();
+    });
+  }
+};
+
 }  // namespace esphome::a2dp_sink
 
 #endif  // USE_ESP32 && USE_A2DP_SINK

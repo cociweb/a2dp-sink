@@ -92,6 +92,21 @@ a2dp_sink:
 - **speaker_output_delay** (*Optional*, default `200ms`): Speaker output startup delay.
 - **speaker_pipeline_delay** (*Optional*, default `200ms`): Media pipeline startup delay.
 
+#### Triggers
+
+- **on_audio_start**: Fired when the Bluetooth source starts streaming audio ("A2DP audio started").
+- **on_audio_stop**: Fired when the Bluetooth source stops streaming audio ("A2DP audio stopped").
+
+```yaml
+a2dp_sink:
+  id: a2dp_receiver
+  a2dp_id: a2dp_hub
+  on_audio_start:
+    - switch.turn_on: amplifier_power
+  on_audio_stop:
+    - switch.turn_off: amplifier_power
+```
+
 #### Platforms
 
 The `a2dp_sink` component provides additional ESPHome platforms:
