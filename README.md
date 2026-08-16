@@ -189,9 +189,18 @@ keep that path healthy and make stutter observable instead of guesswork:
   is needed. If the output must stay at 48000 Hz, keep the resampler stage but be
   aware it adds realtime work. You can also nudge SBC negotiation with
   `a2dp: preferred_sample_rate: 44100`.
-- **Keep the Bluetooth stack in internal SRAM.** Leave `bt_allocation_in_psram: false`
-  (the default). Forcing BT allocations into PSRAM adds bus latency/contention on the
-  realtime path.
+- **Keep the realtime path off the PSRAM bus.** The ESP32 has a single, relatively slow
+  PSRAM controller shared by both CPU cores. Putting *everything* on the audio hot path in
+  PSRAM at once — the PCM ring buffer (`use_psram: true`), the Bluetooth stack
+  (`bt_allocation_in_psram: true`) **and** the reader task stack
+  (`media_source: … task_stack_in_psram: true`) — makes those consumers fight over that one
+  bus. The BT stack's constant PSRAM traffic then stalls the reader task's execution, so its
+  loop rate drops below the fixed A2DP arrival rate and the ring buffer overflows **even with
+  zero packet loss / zero `dropped` bytes** (the tell-tale is a healthy `rx` but a `loop_rate`
+  well under ~84/s at 44100 Hz stereo). Keep only the large PCM ring buffer in PSRAM; leave
+  `bt_allocation_in_psram: false` (the default) and set `task_stack_in_psram: false` so the
+  realtime reader executes from fast internal SRAM. Only move BT or the task stack into PSRAM
+  if internal RAM is genuinely exhausted.
 - **Give Bluetooth the radio while streaming.** The ESP32 shares a single 2.4 GHz
   radio between Wi-Fi and Bluetooth. With Wi-Fi power-save (modem sleep) enabled — the
   ESP-IDF default — the radio periodically parks on Wi-Fi and starves the realtime

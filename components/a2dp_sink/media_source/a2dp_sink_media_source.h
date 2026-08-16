@@ -19,8 +19,21 @@ namespace esphome::a2dp_sink {
 
 /// @brief FreeRTOS task stack size (bytes) for the ring-buffer reader task.
 static constexpr uint32_t READER_TASK_STACK = 4096;
-/// @brief Priority for the reader task — above normal but below BT callbacks.
-static constexpr UBaseType_t READER_TASK_PRIORITY = 5;
+/// @brief Priority for the reader task.
+///
+/// The reader is a realtime stage: it moves decoded PCM from the (PSRAM) ring buffer into
+/// the small (~19 KB) downstream I2S speaker buffer, and must keep it topped up or the DAC
+/// underflows and audio stutters. At the old priority (5) the task sat right at the real-time
+/// edge — under background load (Wi-Fi housekeeping, sensors, and especially PSRAM-bus
+/// contention when the BT stack and/or this task's stack also live in PSRAM) it was
+/// descheduled long enough that its throughput dipped below the fixed A2DP arrival rate, so
+/// the ring buffer filled and overflowed even with zero packet loss.
+///
+/// Raise it so the reader wakes promptly after each DMA drain and preempts non-realtime work,
+/// giving comfortable headroom above real time. It stays well below the I2S speaker task (19,
+/// the actual DAC feeder) and the networking/BT tasks, and the reader always blocks or
+/// vTaskDelay()s when idle, so a higher priority never starves lower-priority tasks.
+static constexpr UBaseType_t READER_TASK_PRIORITY = 10;
 /// @brief Chunk size read per iteration in the reader task (bytes).
 /// 2048 == 512 stereo 16-bit frames ≈ 11.5 ms at 44100 Hz.
 ///
