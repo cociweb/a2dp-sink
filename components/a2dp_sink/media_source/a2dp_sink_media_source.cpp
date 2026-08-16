@@ -270,6 +270,11 @@ void A2DPSinkMediaSource::reader_task_() {
   const uint32_t drain_ms = this->parent_->get_pcm_drain_throttle_ms();
   const uint32_t output_delay_ms = this->parent_->get_output_delay_ms();
   uint8_t zero_write_count = 0;
+  // Set once the downstream speaker pipeline has accepted at least one write. Until then
+  // the pipeline is still warming up (its write_audio() returns 0 for a few hundred ms),
+  // so early zero-writes must not be mistaken for a dead downstream and tear down the
+  // stream. See ZERO_WRITE_STARTUP_STOP_COUNT.
+  bool have_written_output = false;
   // Pre-roll (jitter buffer priming) is armed at start and re-armed on every
   // streaming (re)start so the ring buffer is re-primed after sniff-induced
   // stop/start cycles — not just once when the task is first created.
@@ -337,6 +342,7 @@ void A2DPSinkMediaSource::reader_task_() {
         size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
         if (written > 0) {
           zero_write_count = 0;
+          have_written_output = true;
           audio_source->consume(written);
         } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
           this->parent_->get_parent()->set_audio_output_enabled(false);
@@ -378,13 +384,17 @@ read_chunk:
       size_t written = this->write_output(audio_source->data(), available, WRITE_TIMEOUT_MS, info);
       if (written > 0) {
         zero_write_count = 0;
+        have_written_output = true;
         if (this->debug_logging_) {
           this->diag_written_bytes_.fetch_add(written, std::memory_order_relaxed);
           if (written < available)
             this->diag_partial_writes_.fetch_add(1, std::memory_order_relaxed);
         }
         audio_source->consume(written);
-      } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
+      } else if (++zero_write_count >=
+                 (have_written_output ? ZERO_WRITE_STOP_COUNT : ZERO_WRITE_STARTUP_STOP_COUNT)) {
+        // Downstream never accepted audio (before first write) or stopped accepting it
+        // mid-stream (after first write): give up and release the BT source.
         this->parent_->get_parent()->set_audio_output_enabled(false);
         this->parent_->get_parent()->request_audio_suspend();
         goto task_exit_with_idle;

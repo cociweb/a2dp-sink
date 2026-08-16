@@ -31,6 +31,13 @@ static constexpr uint32_t WRITE_TIMEOUT_MS = 100;
 /// @brief Polling interval (ms) when idle / draining.
 static constexpr uint32_t IDLE_POLL_MS = 10;
 static constexpr uint8_t ZERO_WRITE_STOP_COUNT = 3;
+/// @brief Zero-write tolerance before the FIRST successful write (initial pipeline warm-up).
+/// The speaker_source pipeline (mixer/resampler/speaker) can take several hundred ms to
+/// start after play_uri, and its write_audio() legitimately returns 0 during that window.
+/// Counting those early zero-writes against ZERO_WRITE_STOP_COUNT would suspend the BT
+/// source before audio ever reaches the DAC, so allow a longer, bounded grace at startup
+/// (~2 s at WRITE_TIMEOUT_MS per attempt) before giving up on a downstream that never runs.
+static constexpr uint8_t ZERO_WRITE_STARTUP_STOP_COUNT = 20;
 /// @brief Interval (ms) between low-frequency reader-task diagnostics log lines.
 static constexpr uint32_t DIAG_LOG_INTERVAL_MS = 10000;
 
