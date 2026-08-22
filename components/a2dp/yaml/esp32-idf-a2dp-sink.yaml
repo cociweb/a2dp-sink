@@ -25,6 +25,19 @@ psram:
 
 audio:
 
+switch:
+  - platform: template
+    name: "Bluetooth"
+    id: bluetooth_enabled
+    icon: mdi:bluetooth
+    optimistic: true
+    restore_mode: ALWAYS_ON
+    turn_on_action:
+      - a2dp.enable: a2dp_hub
+    turn_off_action:
+      - a2dp.disable: a2dp_hub
+
+
 i2s_audio:
   - id: i2s_audio_bus
     i2s_lrclk_pin: GPIO25

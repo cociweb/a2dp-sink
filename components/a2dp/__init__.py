@@ -66,6 +66,11 @@ A2DPDisableAction = a2dp_ns.class_(
     automation.Action,
     cg.Parented.template(A2DP),
 )
+A2DPDisconnectAction = a2dp_ns.class_(
+    "A2DPDisconnectAction",
+    automation.Action,
+    cg.Parented.template(A2DP),
+)
 A2DPRestartDiscoveryAction = a2dp_ns.class_(
     "A2DPRestartDiscoveryAction",
     automation.Action,
@@ -133,6 +138,12 @@ A2DP_ACTION_SCHEMA = automation.maybe_simple_id(
 @automation.register_action(
     "a2dp.disable",
     A2DPDisableAction,
+    A2DP_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "a2dp.disconnect",
+    A2DPDisconnectAction,
     A2DP_ACTION_SCHEMA,
     synchronous=True,
 )

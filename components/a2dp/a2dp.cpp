@@ -408,11 +408,14 @@ void A2DP::disable() {
     ESP_LOGD(TAG, "disable() called but already disabled");
     return;
   }
+  // Tear down any active link first so connected entities (binary/text sensors,
+  // media players, ...) are notified via the normal callbacks before the whole
+  // BT stack goes away. Without this, disable() used to leave those entities
+  // reporting "connected" even though Bluetooth was no longer running.
+  if (this->connected_)
+    this->disconnect(/*restart_discovery_after=*/false);
   this->deinit_bt_();
   this->enabled_ = false;
-  this->connected_ = false;
-  this->audio_streaming_ = false;
-  this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
   this->reconnect_at_ = 0;
   this->reconnect_attempts_ = 0;
 #ifdef USE_SOFTWARE_COEXISTENCE
@@ -422,6 +425,41 @@ void A2DP::disable() {
   if (this->ring_buffer_ != nullptr)
     this->ring_buffer_->reset();
   ESP_LOGI(TAG, "A2DP hub disabled");
+}
+
+void A2DP::disconnect(bool restart_discovery_after) {
+  if (!this->enabled_) {
+    ESP_LOGD(TAG, "disconnect() called but A2DP not enabled");
+    return;
+  }
+  if (!this->connected_) {
+    ESP_LOGD(TAG, "disconnect() called but not connected");
+    return;
+  }
+  ESP_LOGI(TAG, "A2DP disconnect requested");
+  esp_err_t ret = esp_a2d_sink_disconnect(this->last_peer_bda_);
+  if (ret != ESP_OK)
+    ESP_LOGW(TAG, "esp_a2d_sink_disconnect failed: %s", esp_err_to_name(ret));
+
+  // Don't wait for the (async) ESP_A2D_CONNECTION_STATE_EVT DISCONNECTED event —
+  // callers such as disable() may tear down the whole BT stack right after this
+  // call returns, so update local state and notify subscribers synchronously.
+  // The real event, if/when it arrives, finds connected_ already false and is a
+  // no-op.
+  this->resume_playback_on_reconnect_ = false;
+  this->reconnect_at_ = 0;
+  this->reconnect_attempts_ = 0;
+  this->connected_ = false;
+  this->audio_streaming_ = false;
+  this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
+#ifdef USE_SOFTWARE_COEXISTENCE
+  if (this->software_coexistence_)
+    this->set_coex_preference_(false);
+#endif
+  this->connection_callback_.call(false);
+  this->audio_state_callback_.call(false);
+  if (restart_discovery_after)
+    this->start_discovery_();
 }
 
 void A2DP::restart_discovery() {

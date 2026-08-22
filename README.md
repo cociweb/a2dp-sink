@@ -69,8 +69,15 @@ a2dp:
 ```yaml
 - a2dp.enable: a2dp_hub
 - a2dp.disable: a2dp_hub
+- a2dp.disconnect: a2dp_hub
 - a2dp.restart_discovery: a2dp_hub
 ```
+
+`a2dp.disconnect` tears down the currently connected source (if any) without turning
+Bluetooth off, so the device stays discoverable/reconnectable afterwards.
+`a2dp.disable` now also disconnects any active source before shutting the Bluetooth
+stack down, so connected-state entities (e.g. the `a2dp_sink` binary sensor) are
+updated correctly instead of appearing to stay connected.
 
 ### `a2dp_sink`
 

@@ -114,6 +114,10 @@ class A2DP : public Component {
 
   void enable();
   void disable();
+  /// @brief Explicitly disconnect the currently connected A2DP source, if any.
+  /// @param restart_discovery_after Whether to make the device discoverable again once disconnected
+  ///   (skipped when called as part of disable(), since the whole BT stack is about to go down).
+  void disconnect(bool restart_discovery_after = true);
   void restart_discovery();
   void request_audio_suspend();
 
@@ -340,6 +344,15 @@ class A2DPDisableAction : public Action<Ts...>, public Parented<A2DP> {
   void play(const Ts &...x) override {
     ESP_LOGI("a2dp", "a2dp.disable action");
     this->parent_->disable();
+  }
+};
+
+template<typename... Ts>
+class A2DPDisconnectAction : public Action<Ts...>, public Parented<A2DP> {
+ public:
+  void play(const Ts &...x) override {
+    ESP_LOGI("a2dp", "a2dp.disconnect action");
+    this->parent_->disconnect();
   }
 };
 
