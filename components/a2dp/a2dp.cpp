@@ -582,11 +582,26 @@ void A2DP::save_peer_(const esp_bd_addr_t remote_bda) {
 
 void A2DP::set_coex_preference_(bool prefer_bt) {
 #ifdef HAS_COEX_API
-  esp_coex_preference_t pref = prefer_bt ? ESP_COEX_PREFER_BT : ESP_COEX_PREFER_WIFI;
-  esp_err_t ret = esp_coex_preference_set(pref);
+  // IDF 5.1+ renamed esp_coex_preference_t -> esp_coex_prefer_t and deprecated
+  // esp_coex_preference_set in favour of A2DP/BLE scenario status bits.
+  esp_err_t ret;
+#if defined(ESP_COEX_BT_ST_A2DP_STREAMING)
+  if (prefer_bt) {
+    (void) esp_coex_status_bit_clear(ESP_COEX_ST_TYPE_BT, ESP_COEX_BT_ST_A2DP_PAUSED);
+    ret = esp_coex_status_bit_set(ESP_COEX_ST_TYPE_BT, ESP_COEX_BT_ST_A2DP_STREAMING);
+  } else {
+    (void) esp_coex_status_bit_clear(ESP_COEX_ST_TYPE_BT, ESP_COEX_BT_ST_A2DP_STREAMING);
+    ret = esp_coex_status_bit_set(ESP_COEX_ST_TYPE_BT, ESP_COEX_BT_ST_A2DP_PAUSED);
+  }
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "esp_coex_status_bit_set failed: %s", esp_err_to_name(ret));
+  }
+#else
+  ret = esp_coex_preference_set(prefer_bt ? ESP_COEX_PREFER_BT : ESP_COEX_PREFER_WIFI);
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "esp_coex_preference_set failed: %s", esp_err_to_name(ret));
   }
+#endif
 #else
   ESP_LOGD(TAG, "Software coexistence requested but the coexist API is not compiled in");
 #endif

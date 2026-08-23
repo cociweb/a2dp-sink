@@ -12,14 +12,14 @@ import esphome.final_validate as fv
 from esphome.types import ConfigType
 
 try:
-    from esphome.components.esp32 import request_bluetooth, request_software_coexistence
+    from esphome.components.esp32 import idf_version, request_bluetooth
 except ImportError:
     # ESPHome < 2026.8 wrote these sdkconfig flags directly from each component.
     def request_bluetooth() -> None:
         add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
 
-    def request_software_coexistence() -> None:
-        add_idf_sdkconfig_option("CONFIG_SW_COEXIST_ENABLE", True)
+    def idf_version() -> cv.Version:
+        return cv.Version(5, 0, 0)
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "a2dp"
@@ -222,7 +222,13 @@ async def to_code(config: ConfigType) -> None:
         # software_coexistence is actually enabled.
         cg.add_define("USE_SOFTWARE_COEXISTENCE")
         if software_coexistence and data.has_wifi:
-            request_software_coexistence()
+            # Write the current IDF symbol here. request_software_coexistence()
+            # only sets an ESPHome flag; ESPHome 2026.x then emits the pre-5.1
+            # CONFIG_SW_COEXIST_ENABLE name, which kconfgen rejects on IDF 5.5+.
+            if idf_version() >= cv.Version(5, 1, 0):
+                add_idf_sdkconfig_option("CONFIG_ESP_COEX_SW_COEXIST_ENABLE", True)
+            else:
+                add_idf_sdkconfig_option("CONFIG_SW_COEXIST_ENABLE", True)
         if coex[CONF_PAUSE_WIFI_SOURCES_ON_CONNECT] and data.has_wifi:
             from esphome.components import wifi
 
