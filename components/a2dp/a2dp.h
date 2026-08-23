@@ -214,6 +214,7 @@ class A2DP : public Component {
   void reconnect_to_last_peer_();
   void save_peer_(const esp_bd_addr_t remote_bda);
   void set_coex_preference_(bool prefer_bt);
+  void apply_wifi_pause_(bool pause);
 
   // --- Static ESP-IDF callbacks ---
   static void s_a2d_callback_(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param);
@@ -255,6 +256,9 @@ class A2DP : public Component {
   bool prefer_bt_while_streaming_{true};
   bool prefer_bt_while_discoverable_{false};
   bool pause_wifi_sources_on_connect_{false};
+#ifdef USE_A2DP_WIFI_PAUSE
+  bool wifi_paused_{false};
+#endif
 #endif
 
   // --- Runtime state ---

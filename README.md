@@ -60,7 +60,7 @@ a2dp:
 - **use_psram** (*Optional*, default `false`): Prefer PSRAM for the PCM ring buffer.
 - **preferred_sample_rate** (*Optional*, default `auto`): Preferred SBC sample rate. Supported values are `auto`, `44100`, and `48000`.
 - **preferred_bits_per_sample** (*Optional*, default `16`): Output PCM width used by the media source path. Supported values are `16` and `32`.
-- **coexistence** (*Optional*): Wi-Fi/Bluetooth coexistence tuning.
+- **coexistence** (*Optional*): Wi-Fi/Bluetooth coexistence tuning. YAML keys are unchanged on ESPHome 2026.8+; software coexistence is requested through the ESP32 network reconciler and does not load the ESPHome BLE stack.
 
 #### Automations
 

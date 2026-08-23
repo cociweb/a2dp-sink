@@ -7,9 +7,16 @@
 #include <cstring>
 #include <memory>
 
-#if defined(CONFIG_BTDM_CONTROLLER_MODEM_SLEEP_EXT_WAKEUP) || defined(CONFIG_BTDM_COEX_SUPPORT)
+#ifdef USE_SOFTWARE_COEXISTENCE
+#if defined(CONFIG_SW_COEXIST_ENABLE) || defined(CONFIG_ESP_COEX_SW_COEXIST_ENABLE) || \
+    defined(CONFIG_BTDM_COEX_SUPPORT) || defined(CONFIG_BTDM_CONTROLLER_MODEM_SLEEP_EXT_WAKEUP)
 #include "esp_coexist.h"
 #define HAS_COEX_API
+#endif
+#endif
+
+#ifdef USE_A2DP_WIFI_PAUSE
+#include "esphome/components/wifi/wifi_component.h"
 #endif
 
 static const char *const TAG = "a2dp";
@@ -216,6 +223,7 @@ void A2DP::loop() {
           if (this->software_coexistence_ && !this->prefer_bt_while_discoverable_)
             this->set_coex_preference_(true);
 #endif
+          this->apply_wifi_pause_(true);
           this->connection_callback_.call(true);
         }
         break;
@@ -230,6 +238,7 @@ void A2DP::loop() {
           if (this->software_coexistence_)
             this->set_coex_preference_(false);
 #endif
+          this->apply_wifi_pause_(false);
           this->connection_callback_.call(false);
           this->audio_state_callback_.call(false);
           this->start_discovery_();
@@ -331,6 +340,12 @@ void A2DP::dump_config() {
 #ifdef USE_SOFTWARE_COEXISTENCE
   if (this->software_coexistence_) {
     ESP_LOGCONFIG(TAG, "  Coexistence:   software");
+    ESP_LOGCONFIG(TAG, "    Prefer BT while streaming:     %s",
+                  this->prefer_bt_while_streaming_ ? "yes" : "no");
+    ESP_LOGCONFIG(TAG, "    Prefer BT while discoverable:  %s",
+                  this->prefer_bt_while_discoverable_ ? "yes" : "no");
+    ESP_LOGCONFIG(TAG, "    Pause WiFi sources on connect: %s",
+                  this->pause_wifi_sources_on_connect_ ? "yes" : "no");
   }
 #endif
 }
@@ -359,6 +374,7 @@ void A2DP::enable() {
   if (this->software_coexistence_ && this->prefer_bt_while_discoverable_)
     this->set_coex_preference_(true);
 #endif
+  this->apply_wifi_pause_(false);
 }
 
 void A2DP::disable() {
@@ -377,6 +393,7 @@ void A2DP::disable() {
   if (this->software_coexistence_)
     this->set_coex_preference_(false);
 #endif
+  this->apply_wifi_pause_(false);
   if (this->ring_buffer_ != nullptr)
     this->ring_buffer_->reset();
   ESP_LOGI(TAG, "A2DP hub disabled");
@@ -416,7 +433,12 @@ bool A2DP::init_bt_() {
   }
 
   if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_INITED) {
+#ifdef USE_A2DP_BTDM
+    ret = esp_bt_controller_enable(ESP_BT_MODE_BTDM);
+#else
+    // Classic-only: do not enable the BLE controller or host APIs.
     ret = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
+#endif
     if (ret != ESP_OK) {
       ESP_LOGE(TAG, "esp_bt_controller_enable failed: %s", esp_err_to_name(ret));
       return false;
@@ -565,6 +587,35 @@ void A2DP::set_coex_preference_(bool prefer_bt) {
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "esp_coex_preference_set failed: %s", esp_err_to_name(ret));
   }
+#else
+  ESP_LOGD(TAG, "Software coexistence requested but the coexist API is not compiled in");
+#endif
+}
+
+void A2DP::apply_wifi_pause_(bool pause) {
+#ifdef USE_A2DP_WIFI_PAUSE
+  if (!this->pause_wifi_sources_on_connect_ || wifi::global_wifi_component == nullptr)
+    return;
+  if (pause == this->wifi_paused_)
+    return;
+  this->wifi_paused_ = pause;
+  if (pause) {
+#ifdef USE_WIFI_RUNTIME_POWER_SAVE
+    wifi::global_wifi_component->release_high_performance();
+#endif
+#ifdef USE_WIFI_RUNTIME_ROAMING_SUPPRESSION
+    wifi::global_wifi_component->request_roaming_suppression();
+#endif
+  } else {
+#ifdef USE_WIFI_RUNTIME_POWER_SAVE
+    wifi::global_wifi_component->request_high_performance();
+#endif
+#ifdef USE_WIFI_RUNTIME_ROAMING_SUPPRESSION
+    wifi::global_wifi_component->release_roaming_suppression();
+#endif
+  }
+#else
+  (void) pause;
 #endif
 }
 

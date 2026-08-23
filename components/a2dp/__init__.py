@@ -1,12 +1,28 @@
+from dataclasses import dataclass
+import logging
+
 from esphome import automation
 import esphome.codegen as cg
 from esphome.components.esp32 import add_idf_sdkconfig_option
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
-from esphome.core import ID
+from esphome.core import CORE, ID
 from esphome.cpp_generator import TemplateArgsType
 import esphome.final_validate as fv
 from esphome.types import ConfigType
+
+try:
+    from esphome.components.esp32 import request_bluetooth, request_software_coexistence
+except ImportError:
+    # ESPHome < 2026.8 wrote these sdkconfig flags directly from each component.
+    def request_bluetooth() -> None:
+        add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+
+    def request_software_coexistence() -> None:
+        add_idf_sdkconfig_option("CONFIG_SW_COEXIST_ENABLE", True)
+
+_LOGGER = logging.getLogger(__name__)
+DOMAIN = "a2dp"
 
 CODEOWNERS = ["@cociweb"]
 DEPENDENCIES = ["esp32"]
@@ -37,7 +53,19 @@ BLE_COMPONENTS = {
     "esp32_ble_server",
     "esp32_ble_beacon",
 }
-ble_required = False
+
+
+@dataclass
+class A2DPData:
+    ble_required: bool = False
+    has_wifi: bool = False
+
+
+def _data() -> A2DPData:
+    if DOMAIN not in CORE.data:
+        CORE.data[DOMAIN] = A2DPData()
+    return CORE.data[DOMAIN]
+
 
 SAMPLE_RATE_BUILD_FLAGS = {
     44100: "A2D_SBC_IE_SAMP_FREQ_44",
@@ -106,10 +134,17 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
-def final_validate(config):
-    global ble_required
+def final_validate(config: ConfigType) -> ConfigType:
+    data = _data()
     full_config = fv.full_config.get()
-    ble_required = any(component in full_config for component in BLE_COMPONENTS)
+    data.ble_required = any(component in full_config for component in BLE_COMPONENTS)
+    data.has_wifi = "wifi" in full_config
+    if data.ble_required:
+        _LOGGER.warning(
+            "a2dp uses Bluetooth Classic (A2DP/AVRCP). Combining it with ESPHome BLE "
+            "components on original ESP32 is unsupported: the BLE stack enables BLE-only "
+            "mode and releases Classic controller memory."
+        )
     return config
 
 
@@ -169,24 +204,49 @@ async def to_code(config: ConfigType) -> None:
     if CONF_PAIRING_PIN in config:
         cg.add(var.set_pairing_pin(config[CONF_PAIRING_PIN]))
 
+    data = _data()
+    # Request the BT controller through the 2026.8 network reconciler. This does
+    # not load the ESPHome BLE stack or the IDF BLE host APIs; Classic-only
+    # firmware keeps CONFIG_BT_BLE_ENABLED off below.
+    request_bluetooth()
+    add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+
     if coex := config.get(CONF_COEXISTENCE):
-        cg.add(var.set_software_coexistence(coex[CONF_SOFTWARE_COEXISTENCE]))
+        software_coexistence = coex[CONF_SOFTWARE_COEXISTENCE]
+        cg.add(var.set_software_coexistence(software_coexistence))
         cg.add(var.set_prefer_bt_while_streaming(coex[CONF_PREFER_BT_WHILE_STREAMING]))
         cg.add(var.set_prefer_bt_while_discoverable(coex[CONF_PREFER_BT_WHILE_DISCOVERABLE]))
         cg.add(var.set_pause_wifi_sources_on_connect(coex[CONF_PAUSE_WIFI_SOURCES_ON_CONNECT]))
+        # Always define this when the coexistence block is present so the C++
+        # setters are compiled. The IDF coexist library is only requested when
+        # software_coexistence is actually enabled.
         cg.add_define("USE_SOFTWARE_COEXISTENCE")
+        if software_coexistence and data.has_wifi:
+            request_software_coexistence()
+        if coex[CONF_PAUSE_WIFI_SOURCES_ON_CONNECT] and data.has_wifi:
+            from esphome.components import wifi
 
-    add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+            wifi.enable_runtime_power_save_control()
+            wifi.enable_runtime_roaming_suppression()
+            cg.add_define("USE_A2DP_WIFI_PAUSE")
+
     add_idf_sdkconfig_option("CONFIG_BT_CLASSIC_ENABLED", True)
     add_idf_sdkconfig_option("CONFIG_BT_A2DP_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_TG_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_CT_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST", True)
     add_idf_sdkconfig_option("CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY", True)
-    add_idf_sdkconfig_option("CONFIG_BT_BLE_ENABLED", ble_required)
-    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", not ble_required)
+    add_idf_sdkconfig_option("CONFIG_BT_BLE_ENABLED", data.ble_required)
+    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", not data.ble_required)
     add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BLE_ONLY", False)
-    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BTDM", ble_required)
+    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BTDM", data.ble_required)
+    if not data.ble_required:
+        # request_bluetooth() would otherwise let the reconciler enable BLE 4.2
+        # features. Keep Classic-only A2DP off the BLE host APIs.
+        add_idf_sdkconfig_option("CONFIG_BT_BLE_42_FEATURES_SUPPORTED", False)
+        add_idf_sdkconfig_option("CONFIG_BT_BLE_50_FEATURES_SUPPORTED", False)
+    else:
+        cg.add_define("USE_A2DP_BTDM")
     if CONF_PAIRING_PIN in config:
         add_idf_sdkconfig_option("CONFIG_BT_SSP_ENABLED", False)
         add_idf_sdkconfig_option("CONFIG_BT_LEGACY_PIN_PAIRING_ENABLED", True)
