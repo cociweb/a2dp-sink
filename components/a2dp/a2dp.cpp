@@ -535,7 +535,7 @@ void A2DP::start_discovery_() {
   this->discoverable_ = true;
   this->discoverable_started_at_ = millis();
   if (this->discoverable_duration_ms_ > 0) {
-    ESP_LOGI(TAG, "BT discoverable for %u ms", this->discoverable_duration_ms_);
+    ESP_LOGI(TAG, "BT discoverable for %u ms", (unsigned) this->discoverable_duration_ms_);
   } else {
     ESP_LOGI(TAG, "BT discoverable (indefinite)");
   }

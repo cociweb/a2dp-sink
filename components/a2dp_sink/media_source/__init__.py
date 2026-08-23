@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 from esphome.components import media_source, psram
-from esphome.components.esp32 import add_idf_sdkconfig_option
+from esphome.components.esp32 import add_idf_sdkconfig_option, idf_version
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_TASK_STACK_IN_PSRAM
 from esphome.types import ConfigType
@@ -27,8 +27,11 @@ def validate_task_stack_in_psram(value):
 
 
 def request_external_task_stack() -> None:
-    if hasattr(psram, "request_external_task_stack"):
-        psram.request_external_task_stack()
+    # ESP-IDF 5.5+ renamed CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY.
+    # Set the flag here instead of calling psram.request_external_task_stack(),
+    # which still emits the old name on ESPHome versions that have not been updated.
+    if idf_version() >= cv.Version(5, 5, 0):
+        add_idf_sdkconfig_option("CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM", True)
     else:
         add_idf_sdkconfig_option("CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY", True)
 
