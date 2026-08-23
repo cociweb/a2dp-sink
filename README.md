@@ -60,6 +60,8 @@ a2dp:
 - **use_psram** (*Optional*, default `false`): Prefer PSRAM for the PCM ring buffer.
 - **preferred_sample_rate** (*Optional*, default `auto`): Preferred SBC sample rate. Supported values are `auto`, `44100`, and `48000`.
 - **preferred_bits_per_sample** (*Optional*, default `16`): Output PCM width used by the media source path. Supported values are `16` and `32`.
+- **bt_allocation_in_psram** (*Optional*, default `false`): When `false`, Bluetooth stack allocations stay in internal SRAM (`CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=n`). This keeps the realtime A2DP path off the slower PSRAM bus and helps avoid audio stutter. Set to `true` only if internal RAM is exhausted.
+- **diagnostics** (*Optional*, default `false`): Emit a low-frequency (~10s) debug log line with ring-buffer fill level, high-water mark, bytes received, dropped/overflow bytes, and free internal/PSRAM heap. Useful for isolating realtime audio problems without per-packet logging.
 - **coexistence** (*Optional*): Wi-Fi/Bluetooth coexistence tuning.
 
 #### Automations
@@ -67,8 +69,15 @@ a2dp:
 ```yaml
 - a2dp.enable: a2dp_hub
 - a2dp.disable: a2dp_hub
+- a2dp.disconnect: a2dp_hub
 - a2dp.restart_discovery: a2dp_hub
 ```
+
+`a2dp.disconnect` tears down the currently connected source (if any) without turning
+Bluetooth off, so the device stays discoverable/reconnectable afterwards.
+`a2dp.disable` now also disconnects any active source before shutting the Bluetooth
+stack down, so connected-state entities (e.g. the `a2dp_sink` binary sensor) are
+updated correctly instead of appearing to stay connected.
 
 ### `a2dp_sink`
 
@@ -90,6 +99,21 @@ a2dp_sink:
 - **speaker_output_delay** (*Optional*, default `200ms`): Speaker output startup delay.
 - **speaker_pipeline_delay** (*Optional*, default `200ms`): Media pipeline startup delay.
 
+#### Triggers
+
+- **on_audio_start**: Fired when the Bluetooth source starts streaming audio ("A2DP audio started").
+- **on_audio_stop**: Fired when the Bluetooth source stops streaming audio ("A2DP audio stopped").
+
+```yaml
+a2dp_sink:
+  id: a2dp_receiver
+  a2dp_id: a2dp_hub
+  on_audio_start:
+    - switch.turn_on: amplifier_power
+  on_audio_stop:
+    - switch.turn_off: amplifier_power
+```
+
 #### Platforms
 
 The `a2dp_sink` component provides additional ESPHome platforms:
@@ -106,6 +130,7 @@ media_source:
     id: a2dp_media_source
     a2dp_sink_id: a2dp_receiver
     task_stack_in_psram: true
+    debug_logging: false
 
 binary_sensor:
   - platform: a2dp_sink
@@ -173,6 +198,63 @@ Supported types:
 - `artist`
 - `album`
 - `album_artist` *(accepted for YAML compatibility, but AVRCP does not expose a standard album artist attribute through this ESP-IDF API)*
+
+## Realtime audio tuning & diagnostics
+
+Bluetooth A2DP is a realtime source: decoded PCM arrives from the phone at a fixed
+rate and must reach I2S with bounded latency. A few settings and diagnostics help
+keep that path healthy and make stutter observable instead of guesswork:
+
+- **Match the negotiated sample rate.** Most phones negotiate A2DP/SBC at
+  `44100 Hz`. Configure `a2dp_sink: sample_rate: 44100` and, ideally, run the whole
+  speaker/I2S chain at 44100 Hz (the TAS5805M supports 44.1 kHz) so no resampling
+  is needed. If the output must stay at 48000 Hz, keep the resampler stage but be
+  aware it adds realtime work. You can also nudge SBC negotiation with
+  `a2dp: preferred_sample_rate: 44100`.
+- **Keep the realtime path off the PSRAM bus.** The ESP32 has a single, relatively slow
+  PSRAM controller shared by both CPU cores. Putting *everything* on the audio hot path in
+  PSRAM at once — the PCM ring buffer (`use_psram: true`), the Bluetooth stack
+  (`bt_allocation_in_psram: true`) **and** the reader task stack
+  (`media_source: … task_stack_in_psram: true`) — makes those consumers fight over that one
+  bus. The BT stack's constant PSRAM traffic then stalls the reader task's execution, so its
+  loop rate drops below the fixed A2DP arrival rate and the ring buffer overflows **even with
+  zero packet loss / zero `dropped` bytes** (the tell-tale is a healthy `rx` but a `loop_rate`
+  well under ~84/s at 44100 Hz stereo). Keep only the large PCM ring buffer in PSRAM; leave
+  `bt_allocation_in_psram: false` (the default) and set `task_stack_in_psram: false` so the
+  realtime reader executes from fast internal SRAM. Only move BT or the task stack into PSRAM
+  if internal RAM is genuinely exhausted.
+- **Give Bluetooth the radio while streaming.** The ESP32 shares a single 2.4 GHz
+  radio between Wi-Fi and Bluetooth. With Wi-Fi power-save (modem sleep) enabled — the
+  ESP-IDF default — the radio periodically parks on Wi-Fi and starves the realtime
+  A2DP link, which shows up as controller-level packet loss in the log
+  (`BT_APPL: Pkt dropped`, `Sequence numbers error`) together with rising `underruns`
+  and a ring buffer that never fills. Enable the coexistence block and keep
+  `prefer_bt_while_streaming: true` (the default) so the component disables Wi-Fi
+  power-save while audio is streaming and restores your configured mode afterwards:
+
+  ```yaml
+  a2dp:
+    coexistence:
+      software_coexistence: true
+      prefer_bt_while_streaming: true
+  ```
+- **Size the ring buffer for latency, not for hiding drops.** A larger buffer only
+  masks a pacing problem while adding seconds of latency and a large post-pause
+  backlog. Prefer a modest buffer plus the diagnostics below to find the real cause.
+- **Enable diagnostics while investigating.** Set `a2dp: diagnostics: true` and
+  `media_source: … debug_logging: true`. Roughly every 10 seconds the log then shows:
+
+  - hub: ring-buffer fill %, high-water mark, total bytes received, dropped/overflow
+    bytes (audio silently discarded because the buffer was full), free internal heap,
+    free PSRAM;
+  - reader task: loop rate, underrun count (buffer empty while playing), partial-write
+    count, total bytes written to the speaker pipeline, and the minimum task stack
+    watermark.
+
+  Rising `dropped` bytes point to the producer overrunning a too-small/too-slow
+  consumer; rising `underruns` point to the consumer starving (RF loss, downstream
+  backpressure, or resampler/mixer stalls). These counters isolate whether the
+  bottleneck is upstream (Bluetooth) or downstream (speaker pipeline).
 
 ## Complete example
 

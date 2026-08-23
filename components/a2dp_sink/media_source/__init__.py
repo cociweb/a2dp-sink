@@ -11,6 +11,8 @@ CODEOWNERS = ["@cociweb"]
 DEPENDENCIES = ["a2dp_sink"]
 AUTO_LOAD = ["audio"]
 
+CONF_DEBUG_LOGGING = "debug_logging"
+
 A2DPSinkMediaSource = a2dp_sink_ns.class_(
     "A2DPSinkMediaSource",
     cg.Component,
@@ -39,6 +41,7 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(CONF_A2DP_SINK_ID): cv.use_id(A2DPSink),
             cv.Optional(CONF_TASK_STACK_IN_PSRAM): validate_task_stack_in_psram,
+            cv.Optional(CONF_DEBUG_LOGGING, default=False): cv.boolean,
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -55,3 +58,5 @@ async def to_code(config: ConfigType) -> None:
     if config.get(CONF_TASK_STACK_IN_PSRAM):
         cg.add(var.set_task_stack_in_psram(True))
         request_external_task_stack()
+
+    cg.add(var.set_debug_logging(config[CONF_DEBUG_LOGGING]))

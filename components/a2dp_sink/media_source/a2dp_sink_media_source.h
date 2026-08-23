@@ -18,11 +18,33 @@
 namespace esphome::a2dp_sink {
 
 /// @brief FreeRTOS task stack size (bytes) for the ring-buffer reader task.
-static constexpr uint32_t READER_TASK_STACK = 3072;
-/// @brief Priority for the reader task — above normal but below BT callbacks.
-static constexpr UBaseType_t READER_TASK_PRIORITY = 5;
+static constexpr uint32_t READER_TASK_STACK = 4096;
+/// @brief Priority for the reader task.
+///
+/// The reader is a realtime stage: it moves decoded PCM from the (PSRAM) ring buffer into
+/// the small (~19 KB) downstream I2S speaker buffer, and must keep it topped up or the DAC
+/// underflows and audio stutters. At the old priority (5) the task sat right at the real-time
+/// edge — under background load (Wi-Fi housekeeping, sensors, and especially PSRAM-bus
+/// contention when the BT stack and/or this task's stack also live in PSRAM) it was
+/// descheduled long enough that its throughput dipped below the fixed A2DP arrival rate, so
+/// the ring buffer filled and overflowed even with zero packet loss.
+///
+/// Raise it so the reader wakes promptly after each DMA drain and preempts non-realtime work,
+/// giving comfortable headroom above real time. It stays well below the I2S speaker task (19,
+/// the actual DAC feeder) and the networking/BT tasks, and the reader always blocks or
+/// vTaskDelay()s when idle, so a higher priority never starves lower-priority tasks.
+static constexpr UBaseType_t READER_TASK_PRIORITY = 10;
 /// @brief Chunk size read per iteration in the reader task (bytes).
 /// 2048 == 512 stereo 16-bit frames ≈ 11.5 ms at 44100 Hz.
+///
+/// Keep this small. Each iteration hands the chunk to write_output(), which ultimately
+/// calls xRingbufferSend() on the downstream speaker's ring buffer (~19 KB) and only
+/// succeeds if the WHOLE chunk fits atomically. A large chunk forces the reader to wait
+/// for that small buffer to drain far enough to admit the whole write, so it blocks up to
+/// WRITE_TIMEOUT_MS and frequently falls back to throttled partial writes — dropping
+/// sustained throughput below the ~172 KB/s A2DP real-time rate and overflowing the PCM
+/// ring buffer. Small, frequent writes match the DAC drain granularity and sustain
+/// real-time throughput.
 static constexpr size_t READER_CHUNK_SIZE = 2048;
 /// @brief Max milliseconds the ring buffer will block waiting for data.
 static constexpr uint32_t RB_READ_TIMEOUT_MS = 20;
@@ -31,6 +53,15 @@ static constexpr uint32_t WRITE_TIMEOUT_MS = 100;
 /// @brief Polling interval (ms) when idle / draining.
 static constexpr uint32_t IDLE_POLL_MS = 10;
 static constexpr uint8_t ZERO_WRITE_STOP_COUNT = 3;
+/// @brief Zero-write tolerance before the FIRST successful write (initial pipeline warm-up).
+/// The speaker_source pipeline (mixer/resampler/speaker) can take several hundred ms to
+/// start after play_uri, and its write_audio() legitimately returns 0 during that window.
+/// Counting those early zero-writes against ZERO_WRITE_STOP_COUNT would suspend the BT
+/// source before audio ever reaches the DAC, so allow a longer, bounded grace at startup
+/// (~2 s at WRITE_TIMEOUT_MS per attempt) before giving up on a downstream that never runs.
+static constexpr uint8_t ZERO_WRITE_STARTUP_STOP_COUNT = 20;
+/// @brief Interval (ms) between low-frequency reader-task diagnostics log lines.
+static constexpr uint32_t DIAG_LOG_INTERVAL_MS = 10000;
 
 // --- Event bits: main loop → reader task ---
 static constexpr EventBits_t EVT_CMD_START = BIT0;  ///< play_uri / resume
@@ -78,6 +109,7 @@ class A2DPSinkMediaSource : public Component,
   void dump_config() override;
 
   void set_task_stack_in_psram(bool v) { this->task_stack_in_psram_ = v; }
+  void set_debug_logging(bool v) { this->debug_logging_ = v; }
 
   // --- MediaSource interface ---
   bool play_uri(const std::string &uri) override;
@@ -90,6 +122,21 @@ class A2DPSinkMediaSource : public Component,
   /// @brief The reader task body.
   void reader_task_();
 
+  /// @brief Result of the pre-roll (jitter buffer priming) wait.
+  enum class PrerollResult {
+    PROCEED,  ///< Target reached, timed out, or streaming stopped — continue the read loop.
+    STOP,     ///< EVT_CMD_STOP was signalled — the task must exit without reporting IDLE.
+  };
+
+  /// @brief Block until the ring buffer holds @p output_delay_ms worth of PCM.
+  ///
+  /// Builds a jitter buffer so the speaker pipeline has headroom to absorb BT
+  /// sniff cycles, WiFi roam scans, and PSRAM latency. Time spent waiting while
+  /// the buffer is empty (e.g. before Bluetooth starts streaming) is not counted
+  /// against the fill timeout, so the gate keeps waiting for the stream to begin
+  /// but cannot hang forever once data is actually flowing. Abortable by STOP.
+  PrerollResult wait_for_preroll_(uint32_t output_delay_ms);
+
   /// @brief Start the reader task (idempotent).
   void start_task_();
 
@@ -97,6 +144,16 @@ class A2DPSinkMediaSource : public Component,
   EventGroupHandle_t event_group_{nullptr};
   bool task_stack_in_psram_{false};
   bool pending_stop_{false};
+
+  // --- Diagnostics (reader task → main loop) ---
+  bool debug_logging_{false};
+  std::atomic<uint32_t> diag_underruns_{0};       ///< Times the ring buffer was empty while playing.
+  std::atomic<uint32_t> diag_partial_writes_{0};  ///< write_output() accepted fewer bytes than offered.
+  std::atomic<uint32_t> diag_loops_{0};           ///< Reader-task main-loop iterations (for loop rate).
+  std::atomic<uint64_t> diag_written_bytes_{0};   ///< Total PCM bytes handed to the speaker pipeline.
+  std::atomic<uint32_t> diag_min_stack_free_{0xFFFFFFFFu};  ///< Min reader-task stack watermark (bytes).
+  uint32_t diag_last_log_at_{0};
+  uint32_t diag_prev_loops_{0};
 };
 
 }  // namespace esphome::a2dp_sink

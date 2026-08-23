@@ -24,6 +24,9 @@
 #include "esp_bt_device.h"
 #include "esp_bt_main.h"
 #include "esp_gap_bt_api.h"
+#ifdef USE_SOFTWARE_COEXISTENCE
+#include "esp_wifi_types.h"
+#endif
 
 namespace esphome::a2dp {
 
@@ -98,6 +101,7 @@ class A2DP : public Component {
   void set_preferred_bits_per_sample(uint8_t bits_per_sample) {
     this->preferred_bits_per_sample_ = bits_per_sample;
   }
+  void set_diagnostics_enabled(bool enabled) { this->diagnostics_enabled_ = enabled; }
 
 #ifdef USE_SOFTWARE_COEXISTENCE
   void set_software_coexistence(bool v) { this->software_coexistence_ = v; }
@@ -110,6 +114,10 @@ class A2DP : public Component {
 
   void enable();
   void disable();
+  /// @brief Explicitly disconnect the currently connected A2DP source, if any.
+  /// @param restart_discovery_after Whether to make the device discoverable again once disconnected
+  ///   (skipped when called as part of disable(), since the whole BT stack is about to go down).
+  void disconnect(bool restart_discovery_after = true);
   void restart_discovery();
   void request_audio_suspend();
 
@@ -128,6 +136,16 @@ class A2DP : public Component {
   void reset_audio_buffer() {
     if (this->ring_buffer_ != nullptr)
       this->ring_buffer_->reset();
+  }
+
+  // --- Diagnostics counters (updated from the BT data callback, read anywhere) ---
+  size_t get_ring_buffer_size() const { return this->ring_buffer_size_; }
+  uint64_t get_diag_bytes_received() const { return this->diag_bytes_received_.load(std::memory_order_relaxed); }
+  uint64_t get_diag_bytes_dropped() const { return this->diag_bytes_dropped_.load(std::memory_order_relaxed); }
+  size_t get_diag_fill_high_water() const { return this->diag_fill_high_water_.load(std::memory_order_relaxed); }
+  /// @brief Current number of bytes queued in the PCM ring buffer, or 0 if unavailable.
+  size_t get_ring_buffer_fill() const {
+    return this->ring_buffer_ != nullptr ? this->ring_buffer_->available() : 0;
   }
 
   // --- Callback registration ---
@@ -244,17 +262,24 @@ class A2DP : public Component {
   char pairing_pin_[17]{};
   uint8_t pairing_pin_len_{0};
   uint8_t preferred_bits_per_sample_{16};
+  bool diagnostics_enabled_{false};
   ESPPreferenceObject peer_pref_;
   esp_bd_addr_t last_peer_bda_{};
   bool has_last_peer_{false};
   uint32_t reconnect_at_{0};
   uint8_t reconnect_attempts_{0};
+  /// @brief True if audio was streaming when the link dropped — resume playback on reconnect.
+  bool resume_playback_on_reconnect_{false};
 
 #ifdef USE_SOFTWARE_COEXISTENCE
   bool software_coexistence_{false};
   bool prefer_bt_while_streaming_{true};
   bool prefer_bt_while_discoverable_{false};
   bool pause_wifi_sources_on_connect_{false};
+  /// @brief Wi-Fi power-save mode captured before BT was prioritised, so it can be restored.
+  wifi_ps_type_t saved_wifi_ps_{WIFI_PS_MIN_MODEM};
+  /// @brief True while saved_wifi_ps_ holds a mode to restore (BT is currently prioritised).
+  bool wifi_ps_saved_{false};
 #endif
 
   // --- Runtime state ---
@@ -279,6 +304,12 @@ class A2DP : public Component {
 
   // --- Ring buffer ---
   std::shared_ptr<ring_buffer::RingBuffer> ring_buffer_;
+
+  // --- Diagnostics (lock-free counters; written from the BT data callback) ---
+  std::atomic<uint64_t> diag_bytes_received_{0};   ///< Total decoded PCM bytes received from Bluedroid.
+  std::atomic<uint64_t> diag_bytes_dropped_{0};    ///< PCM bytes discarded because the ring buffer was full.
+  std::atomic<size_t> diag_fill_high_water_{0};    ///< Highest observed ring-buffer fill level (bytes).
+  uint32_t diag_last_log_at_{0};                   ///< millis() of the last periodic diagnostics log.
 
   // --- Callbacks (consumed by subcomponents) ---
   LazyCallbackManager<void(bool)> connection_callback_;
@@ -313,6 +344,15 @@ class A2DPDisableAction : public Action<Ts...>, public Parented<A2DP> {
   void play(const Ts &...x) override {
     ESP_LOGI("a2dp", "a2dp.disable action");
     this->parent_->disable();
+  }
+};
+
+template<typename... Ts>
+class A2DPDisconnectAction : public Action<Ts...>, public Parented<A2DP> {
+ public:
+  void play(const Ts &...x) override {
+    ESP_LOGI("a2dp", "a2dp.disconnect action");
+    this->parent_->disconnect();
   }
 };
 
