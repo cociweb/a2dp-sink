@@ -43,19 +43,20 @@ Sendspin `STOP` sets client state `EXTERNAL_SOURCE` and does **not** go IDLE unt
 | Do | Do not |
 |---|---|
 | Default `bt_allocation_in_psram: true`; do not overwrite YAML `sdkconfig_options` | Force `CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=n` to “save PSRAM bus” |
-| Ignore `AUDIO_STARTED` when media source is IDLE | `play_uri("a2dp://stream")` / `request_play_uri_` from that callback |
+| If `AUDIO_STARTED` fires while IDLE, `request_play_uri_(A2DP_URI)` (dedup with a pending flag) — goes through the orchestrator's control queue | Call `play_uri("a2dp://stream")` directly from that callback — bypasses arbitration, can steal Sendspin mid-stop |
 | `disable()`: disconnect, wait for ACL, then `deinit_bt_()` | `deinit_bt_()` immediately in `disable()` |
 | Clear `EVT_CMD_START` when starting drain | Leave START set so drain cancels every loop |
 | On BT audio stop while ACL is up, report **PAUSED** (keep I2S) | Report IDLE on phone pause — `speaker_source` `finish()`es DMA and realloc fails |
 | Treat mixer warm-up zero-writes as start-up (`ZERO_WRITE_STARTUP_STOP_COUNT`) | Treat first 3×100 ms of 0-byte writes as a dead speaker |
 | Keep reader chunk at 2048; stack in **internal** RAM if A2DP stutters with `use_psram: true` | Put PCM ring **and** BT heap **and** reader stack in PSRAM at once |
 | Enable `diagnostics: true` / media_source `debug_logging: true` for one device | Raise log level globally and drown the serial |
+| Fix A2DP-side bugs in the `a2dp`/`a2dp-sink` component (ships via `github://cociweb/a2dp-sink@…`) | Rely on a live-device YAML edit as the fix — HA addon YAML under Docker/CIFS is often read-only from this checkout, and per-device YAML drift is not wanted |
 
 ## Keep vs drop (`disconnect-fix` vs `main`)
 
-**Keep:** `a2dp.disconnect`; deferred `disable()` teardown; drain START-bit clear; ESPHome 2026.8 coexistence / `request_bluetooth` / IDF 5.1 sdkconfig names; original-ESP32-only check; auto-reconnect + AVRCP resume; preroll; reader prio 10; zero-write start-up grace; `diagnostics` default off; PAUSED (not IDLE) when BT audio stops but ACL is still up.
+**Keep:** `a2dp.disconnect`; deferred `disable()` teardown; drain START-bit clear; ESPHome 2026.8 coexistence / `request_bluetooth` / IDF 5.1 sdkconfig names; original-ESP32-only check; auto-reconnect + AVRCP resume; preroll; reader prio 10; zero-write start-up grace; `diagnostics` default off; PAUSED (not IDLE) when BT audio stops but ACL is still up; guarded `request_play_uri_()` when `AUDIO_STARTED` fires while IDLE.
 
-**Drop / never reintroduce:** BT heap default following `use_psram` in a way that can be false; IDLE `AUDIO_STARTED` auto-play; vendoring `speaker_source`; Sendspin `STOP` → IDLE as an I2S workaround.
+**Drop / never reintroduce:** BT heap default following `use_psram` in a way that can be false; a **direct** `play_uri()` call from `AUDIO_STARTED` (bypasses the orchestrator — use `request_play_uri_()` instead, and only while IDLE); vendoring `speaker_source`; Sendspin `STOP` → IDLE as an I2S workaround.
 
 See [debugging.md](debugging.md) iteration log for dated field reports.
 

@@ -39,11 +39,24 @@ void A2DPSinkMediaSource::setup() {
   this->parent_->add_on_audio_streaming_callback([this](bool streaming) {
     if (this->pending_stop_)
       return;
-    // Match main: ignore streaming events while IDLE. YAML play_media (or an
-    // explicit a2dp:// URI) owns source switching — auto play_uri() here stole
-    // Sendspin and raced the orchestrator.
-    if (this->get_state() == media_source::MediaSourceState::IDLE)
+    if (this->get_state() == media_source::MediaSourceState::IDLE) {
+      // Real BT audio just started but we're not the active pipeline source — e.g. the ACL
+      // was already up so a YAML connect-edge automation never re-fired, or a previous
+      // session left us IDLE. Ask the orchestrator to switch to us via request_play_uri_(),
+      // the same sanctioned "I have content, play me" call Sendspin uses in its own
+      // on_stream_start(). This queues through the normal control path (try_execute_play_uri_
+      // stops whatever is active first) — it is NOT a direct play_uri() call, so it doesn't
+      // bypass or race the orchestrator like the old raw auto-play attempt did.
+      if (streaming) {
+        if (!this->auto_play_pending_) {
+          this->auto_play_pending_ = true;
+          this->request_play_uri_(A2DP_URI);
+        }
+      } else {
+        this->auto_play_pending_ = false;
+      }
       return;
+    }
     if (streaming) {
       this->start_task_();
       xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN | EVT_CMD_PAUSE);
@@ -142,6 +155,10 @@ bool A2DPSinkMediaSource::play_uri(const std::string &uri) {
   if (!this->can_handle(uri))
     return false;
 
+  // The orchestrator is processing this request now; stop dedup-gating further
+  // auto-play requests from the audio-streaming callback.
+  this->auto_play_pending_ = false;
+
   if (this->get_state() == media_source::MediaSourceState::PLAYING) {
     ESP_LOGD(TAG, "play_uri: already playing");
     return true;
@@ -169,6 +186,7 @@ void A2DPSinkMediaSource::handle_command(media_source::MediaSourceCommand comman
   switch (command) {
     case media_source::MediaSourceCommand::STOP:
       ESP_LOGI(TAG, "STOP");
+      this->auto_play_pending_ = false;
       this->parent_->get_parent()->set_audio_output_enabled(false);
       this->parent_->get_parent()->request_audio_suspend();
 #ifdef USE_A2DP_AVRCP

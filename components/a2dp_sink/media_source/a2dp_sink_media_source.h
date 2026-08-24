@@ -91,8 +91,14 @@ static constexpr EventBits_t EVT_ALL_BITS =
  *
  * Lifecycle:
  *   - play_uri("a2dp://stream") → starts the reader FreeRTOS task, reports PLAYING.
- *   - BT source starts streaming → PCM data flows from the ring buffer to the
- *     speaker pipeline via write_output().
+ *   - BT source starts streaming while IDLE (e.g. ACL was already up so a YAML
+ *     connect-edge trigger never re-fired) → request_play_uri_() asks the
+ *     orchestrator to switch to us, same as Sendspin's own on_stream_start().
+ *     This goes through the normal control queue / try_execute_play_uri_, which
+ *     stops whatever is currently active first — it does not call play_uri()
+ *     directly and does not bypass the orchestrator.
+ *   - BT source starts streaming while we ARE the active/paused source → PCM
+ *     data flows from the ring buffer to the speaker pipeline via write_output().
  *   - BT audio stopped (ACL still up) → drain, keep the reader in PAUSE wait
  *     (do not deallocate), main loop reports PAUSED so speaker_source does not
  *     finish() I2S (DMA cannot realloc under Classic BT).
@@ -149,6 +155,10 @@ class A2DPSinkMediaSource : public Component,
   EventGroupHandle_t event_group_{nullptr};
   bool task_stack_in_psram_{false};
   bool pending_stop_{false};
+  /// @brief Set while a request_play_uri_() we issued from the audio-streaming callback is
+  /// waiting for the orchestrator to call play_uri(). Dedups repeated AUDIO_STARTED events
+  /// (e.g. sniff-exit blips) so we don't spam the control queue before the first request lands.
+  bool auto_play_pending_{false};
 
   // --- Diagnostics (reader task → main loop) ---
   bool debug_logging_{false};
