@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 import logging
-
 from esphome import automation
 import esphome.codegen as cg
 from esphome.components.esp32 import add_idf_sdkconfig_option
@@ -46,6 +45,59 @@ CONF_SOFTWARE_COEXISTENCE = "software_coexistence"
 CONF_PREFER_BT_WHILE_STREAMING = "prefer_bt_while_streaming"
 CONF_PREFER_BT_WHILE_DISCOVERABLE = "prefer_bt_while_discoverable"
 CONF_PAUSE_WIFI_SOURCES_ON_CONNECT = "pause_wifi_sources_on_connect"
+
+# Written to sdkconfig. Follows use_psram unless the user overrides it.
+# A2DP is Classic BT, which only exists on original ESP32; I2S DMA there
+# cannot use PSRAM, so the BT heap must leave internal SRAM when PSRAM is on.
+_SDKCONFIG_BT_ALLOC_SPIRAM_FIRST = "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST"
+
+
+def _sdkconfig_already_set(name: str) -> bool:
+    """True if YAML sdkconfig_options (or an earlier component) already set ``name``."""
+    try:
+        from esphome.components.esp32.const import KEY_ESP32, KEY_SDKCONFIG_OPTIONS
+    except ImportError:
+        return False
+    opts = CORE.data.get(KEY_ESP32, {}).get(KEY_SDKCONFIG_OPTIONS, {})
+    return name in opts
+
+
+def require_classic_bluetooth(value):
+    """Reject targets that have no Bluetooth Classic (BR/EDR) controller.
+
+    A2DP/AVRCP are Classic-only. Original ESP32 is the only ESPHome ESP32
+    variant with BR/EDR; S3/C3/C6/H2/P4/S2 are BLE-only or have no radio.
+    """
+    if not CORE.is_esp32:
+        raise cv.Invalid(
+            "a2dp requires Bluetooth Classic (BR/EDR), which is only available "
+            "on original ESP32"
+        )
+    try:
+        from esphome.components.esp32 import VARIANT_ESP32, get_esp32_variant
+        from esphome.components.esp32.const import VARIANT_FRIENDLY
+    except ImportError:
+        return value
+    try:
+        variant = get_esp32_variant()
+    except (KeyError, TypeError) as err:
+        raise cv.Invalid(
+            "a2dp requires Bluetooth Classic (BR/EDR) on original ESP32, "
+            "but the ESP32 variant could not be determined"
+        ) from err
+    if variant != VARIANT_ESP32:
+        name = VARIANT_FRIENDLY.get(variant, variant)
+        raise cv.Invalid(
+            f"a2dp requires Bluetooth Classic (BR/EDR). {name} does not support "
+            f"Classic Bluetooth. Use original ESP32 (WROOM/WROVER)."
+        )
+    return value
+
+
+def _apply_bt_allocation_default(config: ConfigType) -> ConfigType:
+    if CONF_BT_ALLOCATION_IN_PSRAM not in config:
+        config[CONF_BT_ALLOCATION_IN_PSRAM] = bool(config.get(CONF_USE_PSRAM, False))
+    return config
 
 BLE_COMPONENTS = {
     "bluetooth_proxy",
@@ -134,12 +186,13 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PREFERRED_BITS_PER_SAMPLE, default=16): cv.one_of(
                 16, 32, int=True
             ),
-            cv.Optional(CONF_BT_ALLOCATION_IN_PSRAM, default=False): cv.boolean,
+            cv.Optional(CONF_BT_ALLOCATION_IN_PSRAM): cv.boolean,
             cv.Optional(CONF_DIAGNOSTICS, default=False): cv.boolean,
             cv.Optional(CONF_COEXISTENCE): COEXISTENCE_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
-    cv.only_on_esp32,
+    require_classic_bluetooth,
+    _apply_bt_allocation_default,
 )
 
 
@@ -256,12 +309,27 @@ async def to_code(config: ConfigType) -> None:
     add_idf_sdkconfig_option("CONFIG_BT_A2DP_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_TG_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_CT_ENABLE", True)
-    # Keep Bluetooth stack allocations in internal SRAM by default. Forcing them into
-    # PSRAM (SPIRAM_FIRST) adds latency/contention on the realtime A2DP path and is a
-    # known contributor to audio stutter; only enable it if internal RAM is exhausted.
-    add_idf_sdkconfig_option(
-        "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST", config[CONF_BT_ALLOCATION_IN_PSRAM]
-    )
+    # Do not clobber a user sdkconfig_options value. Forcing the BT heap into
+    # internal SRAM while use_psram is on starved I2S DMA on original ESP32.
+    if _sdkconfig_already_set(_SDKCONFIG_BT_ALLOC_SPIRAM_FIRST):
+        _LOGGER.debug(
+            "Leaving existing %s (bt_allocation_in_psram=%s)",
+            _SDKCONFIG_BT_ALLOC_SPIRAM_FIRST,
+            config[CONF_BT_ALLOCATION_IN_PSRAM],
+        )
+    else:
+        add_idf_sdkconfig_option(
+            _SDKCONFIG_BT_ALLOC_SPIRAM_FIRST, config[CONF_BT_ALLOCATION_IN_PSRAM]
+        )
+        if config.get(CONF_USE_PSRAM) and not config[CONF_BT_ALLOCATION_IN_PSRAM]:
+            _LOGGER.warning(
+                "a2dp: bt_allocation_in_psram is false while use_psram is true. "
+                "I2S DMA buffers require internal SRAM; Bluetooth Classic often "
+                "exhausts that heap, and the speaker fails with "
+                "'allocate DMA buffer failed'. Leave bt_allocation_in_psram unset "
+                "(it follows use_psram) or set it true / "
+                "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: y."
+            )
     add_idf_sdkconfig_option("CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY", True)
     add_idf_sdkconfig_option("CONFIG_BT_BLE_ENABLED", data.ble_required)
     add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", not data.ble_required)

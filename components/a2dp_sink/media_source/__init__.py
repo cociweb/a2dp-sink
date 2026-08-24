@@ -5,6 +5,8 @@ import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_TASK_STACK_IN_PSRAM
 from esphome.types import ConfigType
 
+from esphome.components.a2dp import require_classic_bluetooth
+
 from .. import CONF_A2DP_SINK_ID, A2DPSink, a2dp_sink_ns
 
 CODEOWNERS = ["@cociweb"]
@@ -48,7 +50,7 @@ CONFIG_SCHEMA = cv.All(
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
-    cv.only_on_esp32,
+    require_classic_bluetooth,
 )
 
 

@@ -2,7 +2,7 @@ from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_SAMPLE_RATE, CONF_TRIGGER_ID
-from esphome.components.a2dp import CONF_A2DP_ID, A2DP
+from esphome.components.a2dp import CONF_A2DP_ID, A2DP, require_classic_bluetooth
 from esphome.core import ID
 from esphome.cpp_generator import TemplateArgsType
 from esphome.types import ConfigType
@@ -61,7 +61,7 @@ CONFIG_SCHEMA = cv.All(
             ),
         }
     ).extend(cv.COMPONENT_SCHEMA),
-    cv.only_on_esp32,
+    require_classic_bluetooth,
 )
 
 A2DP_SINK_ACTION_SCHEMA = automation.maybe_simple_id(
