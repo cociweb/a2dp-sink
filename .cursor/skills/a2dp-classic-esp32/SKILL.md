@@ -19,6 +19,10 @@ Keep new work in **this repo**. HA devices load `github://cociweb/a2dp-sink@…`
 
 Do not change mixer/resampler `task_stack_in_psram` unless the user asks.
 
+## Close the loop
+
+Every new log/iteration **must** be written into [debugging.md](debugging.md) (and this skill / `AGENTS.md` if rules change) **before** the next code change. If the logs match an existing symptom row, follow that row — do not start a new architecture. Skipping the write-back is how this project loops on `i2s_alloc_dma_desc`.
+
 ## Architecture (one speaker, many sources)
 
 ```
@@ -52,12 +56,14 @@ Sendspin `STOP` sets client state `EXTERNAL_SOURCE` and does **not** go IDLE unt
 
 **Drop / never reintroduce:** BT heap default following `use_psram` in a way that can be false; IDLE `AUDIO_STARTED` auto-play; vendoring `speaker_source`; Sendspin `STOP` → IDLE as an I2S workaround.
 
+See [debugging.md](debugging.md) iteration log for dated field reports.
+
 ## Debug order
 
 1. Confirm variant is original ESP32, not S3.
-2. At `A2DP audio started`, read `heap_internal`. If it is ~20 KB or falling, DMA restart will fail. PSRAM free MB does not matter.
+2. At `A2DP audio started` / `a2dp: diag:`, read `heap_internal` **and** `dma_largest`. If `dma_largest` is below ~20 KB, I2S (re)start will fail. PSRAM free MB does not matter.
 3. Map logs with [debugging.md](debugging.md).
-4. If Sendspin dies **when A2DP starts** and I2S logs `allocate DMA buffer failed`, check `bt_allocation_in_psram` / `CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST` before touching mixer or `speaker_source`.
+4. `allocate DMA buffer failed` on **Sendspin start** (no `A2DP audio started` in the snippet) is the **same** DMA-heap failure, not a Sendspin bug. Chunk warnings are secondary. YAML `CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: y` does not prove DMA can allocate — need `dma_largest`. Do not overlay `speaker_source`.
 5. If A2DP plays 1–2 s then goes silent with no I2S error, look at zero-write suspend and `AUDIO_STARTED` while IDLE.
 6. If disable/reboot shows `bta_dm_disable` / `IllegalInstruction` in the BT task, teardown raced ACL.
 

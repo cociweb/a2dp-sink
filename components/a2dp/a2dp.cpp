@@ -24,6 +24,10 @@
 
 static const char *const TAG = "a2dp";
 
+static unsigned dma_largest_free_() {
+  return (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
+}
+
 namespace esphome::a2dp {
 
 A2DP *global_a2dp = nullptr;
@@ -229,12 +233,12 @@ void A2DP::loop() {
     size_t cap = this->ring_buffer_size_ > 0 ? this->ring_buffer_size_ : 1;
     ESP_LOGD(TAG,
              "diag: streaming=%s fill=%u/%u B (%u%%) hw=%u B rx=%llu KB dropped=%llu KB | "
-             "heap_internal=%u B psram=%u B",
+             "heap_internal=%u B dma_largest=%u B psram=%u B",
              this->audio_streaming_ ? "yes" : "no", (unsigned) fill, (unsigned) this->ring_buffer_size_,
              (unsigned) ((fill * 100) / cap), (unsigned) hw,
              (unsigned long long) (this->diag_bytes_received_.load(std::memory_order_relaxed) / 1024),
              (unsigned long long) (this->diag_bytes_dropped_.load(std::memory_order_relaxed) / 1024),
-             (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL), dma_largest_free_(),
              (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   }
 
@@ -300,8 +304,8 @@ void A2DP::loop() {
           // Playback resumed (either the source restarted on its own or via the
           // AVRCP PLAY we sent on reconnect) — no further resume action needed.
           this->resume_playback_on_reconnect_ = false;
-          ESP_LOGI(TAG, "A2DP audio started (heap_internal=%u B psram=%u B)",
-                   (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+          ESP_LOGI(TAG, "A2DP audio started (heap_internal=%u B dma_largest=%u B psram=%u B)",
+                   (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL), dma_largest_free_(),
                    (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 #ifdef USE_SOFTWARE_COEXISTENCE
           if (this->software_coexistence_ && this->prefer_bt_while_streaming_)
