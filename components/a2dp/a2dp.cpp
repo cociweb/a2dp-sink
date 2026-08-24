@@ -191,6 +191,14 @@ void A2DP::setup() {
 }
 
 void A2DP::loop() {
+  if (this->pending_deinit_ && this->deinit_deadline_ != 0 && millis() >= this->deinit_deadline_) {
+    // Tearing the stack down while the ACL link is still up is what asserts in
+    // bta_dm_disable_search_and_disc(). Leave it running; enabled_ is already false.
+    ESP_LOGW(TAG, "BT disconnect timed out during disable(); leaving stack up to avoid Bluedroid assert");
+    this->pending_deinit_ = false;
+    this->deinit_deadline_ = 0;
+  }
+
   if (this->audio_suspend_requested_.exchange(false, std::memory_order_relaxed) && this->enabled_ &&
       this->connected_ && this->audio_streaming_) {
     esp_err_t ret = esp_a2d_media_ctrl(ESP_A2D_MEDIA_CTRL_SUSPEND);
@@ -252,6 +260,14 @@ void A2DP::loop() {
         break;
 
       case A2DPEvent::DISCONNECTED:
+        if (this->pending_deinit_) {
+          this->connected_ = false;
+          this->audio_streaming_ = false;
+          this->connection_callback_.call(false);
+          this->audio_state_callback_.call(false);
+          this->finish_disable_();
+          break;
+        }
         if (this->connected_) {
           bool was_streaming = this->audio_streaming_;
           this->connected_ = false;
@@ -284,7 +300,9 @@ void A2DP::loop() {
           // Playback resumed (either the source restarted on its own or via the
           // AVRCP PLAY we sent on reconnect) — no further resume action needed.
           this->resume_playback_on_reconnect_ = false;
-          ESP_LOGI(TAG, "A2DP audio started");
+          ESP_LOGI(TAG, "A2DP audio started (heap_internal=%u B psram=%u B)",
+                   (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                   (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 #ifdef USE_SOFTWARE_COEXISTENCE
           if (this->software_coexistence_ && this->prefer_bt_while_streaming_)
             this->set_coex_preference_(true);
@@ -426,21 +444,40 @@ void A2DP::disable() {
     ESP_LOGD(TAG, "disable() called but already disabled");
     return;
   }
-  // Tear down any active link first so connected entities (binary/text sensors,
-  // media players, ...) are notified via the normal callbacks before the whole
-  // BT stack goes away. Without this, disable() used to leave those entities
-  // reporting "connected" even though Bluetooth was no longer running.
-  if (this->connected_)
-    this->disconnect(/*restart_discovery_after=*/false);
-  this->deinit_bt_();
+  if (this->pending_deinit_) {
+    ESP_LOGD(TAG, "disable() already waiting for BT teardown");
+    return;
+  }
   this->enabled_ = false;
   this->reconnect_at_ = 0;
   this->reconnect_attempts_ = 0;
+  this->resume_playback_on_reconnect_ = false;
+  this->stop_discovery_();
 #ifdef USE_SOFTWARE_COEXISTENCE
   if (this->software_coexistence_)
     this->set_coex_preference_(false);
 #endif
   this->apply_wifi_pause_(false);
+
+  // Never call esp_bluedroid_disable() while an ACL link or inquiry is still
+  // live — Bluedroid asserts in bta_dm_disable_search_and_disc(). Disconnect
+  // first and finish teardown from the DISCONNECTED event (with a timeout).
+  if (this->connected_) {
+    this->pending_deinit_ = true;
+    this->deinit_deadline_ = millis() + 2000;
+    ESP_LOGI(TAG, "A2DP disable: disconnecting before stack teardown");
+    esp_err_t ret = esp_a2d_sink_disconnect(this->last_peer_bda_);
+    if (ret != ESP_OK)
+      ESP_LOGW(TAG, "esp_a2d_sink_disconnect failed: %s", esp_err_to_name(ret));
+    return;
+  }
+  this->finish_disable_();
+}
+
+void A2DP::finish_disable_() {
+  this->pending_deinit_ = false;
+  this->deinit_deadline_ = 0;
+  this->deinit_bt_();
   if (this->ring_buffer_ != nullptr)
     this->ring_buffer_->reset();
   ESP_LOGI(TAG, "A2DP hub disabled");

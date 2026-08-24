@@ -39,12 +39,18 @@ void A2DPSinkMediaSource::setup() {
   this->parent_->add_on_audio_streaming_callback([this](bool streaming) {
     if (this->pending_stop_)
       return;
-    if (this->get_state() == media_source::MediaSourceState::IDLE)
-      return;
     if (streaming) {
+      // Phone pressed play after we went IDLE (pipeline warm-up gave up, or a
+      // previous drain finished). Restart the reader instead of dropping the event.
+      if (this->get_state() == media_source::MediaSourceState::IDLE) {
+        this->play_uri(A2DP_URI);
+        return;
+      }
       xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN | EVT_CMD_PAUSE);
       xEventGroupSetBits(this->event_group_, EVT_CMD_START);
     } else {
+      if (this->get_state() == media_source::MediaSourceState::IDLE)
+        return;
       // Clear EVT_CMD_START so the reader's drain branch does not immediately
       // mistake the still-set start bit for a stream resume: leaving it set would
       // cancel the drain every iteration, so the task would never finish draining,
@@ -350,6 +356,8 @@ void A2DPSinkMediaSource::reader_task_() {
           have_written_output = true;
           audio_source->consume(written);
         } else if (++zero_write_count >= ZERO_WRITE_STOP_COUNT) {
+          ESP_LOGW(TAG, "Downstream stopped accepting audio during drain (%u zero writes); suspending BT",
+                   (unsigned) zero_write_count);
           this->parent_->get_parent()->set_audio_output_enabled(false);
           this->parent_->get_parent()->request_audio_suspend();
           goto task_exit_with_idle;
@@ -400,6 +408,9 @@ read_chunk:
                  (have_written_output ? ZERO_WRITE_STOP_COUNT : ZERO_WRITE_STARTUP_STOP_COUNT)) {
         // Downstream never accepted audio (before first write) or stopped accepting it
         // mid-stream (after first write): give up and release the BT source.
+        ESP_LOGW(TAG,
+                 "Downstream not accepting audio (%u zero writes, first_write=%s); suspending BT",
+                 (unsigned) zero_write_count, have_written_output ? "yes" : "no");
         this->parent_->get_parent()->set_audio_output_enabled(false);
         this->parent_->get_parent()->request_audio_suspend();
         goto task_exit_with_idle;

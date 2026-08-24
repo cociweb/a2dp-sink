@@ -227,6 +227,8 @@ class A2DP : public Component {
   // --- BT stack lifecycle ---
   bool init_bt_();
   void deinit_bt_();
+  /// @brief Finish disable() after the ACL link is down (or the wait timed out).
+  void finish_disable_();
   void start_discovery_();
   void stop_discovery_();
   void reconnect_to_last_peer_();
@@ -271,6 +273,9 @@ class A2DP : public Component {
   uint8_t reconnect_attempts_{0};
   /// @brief True if audio was streaming when the link dropped — resume playback on reconnect.
   bool resume_playback_on_reconnect_{false};
+  /// @brief disable() is waiting for the ACL link to drop before deinit_bt_().
+  bool pending_deinit_{false};
+  uint32_t deinit_deadline_{0};
 
 #ifdef USE_SOFTWARE_COEXISTENCE
   bool software_coexistence_{false};
