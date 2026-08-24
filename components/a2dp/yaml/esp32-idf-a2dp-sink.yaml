@@ -77,7 +77,7 @@ a2dp:
   preferred_bits_per_sample: 32  # A2DP decoded PCM is 16-bit; output conversion may use 32-bit
   ring_buffer_size: 262144
   use_psram: true
-  # Follows use_psram (true → BT heap in PSRAM so I2S DMA keeps internal SRAM).
+  # Defaults to true (same as main): Classic BT heap in PSRAM so I2S DMA keeps internal SRAM.
   # bt_allocation_in_psram: true
   # Low-frequency (~10s) diagnostics: ring-buffer fill, drops, heap. See README.
   diagnostics: true

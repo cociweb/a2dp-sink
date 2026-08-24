@@ -46,9 +46,8 @@ CONF_PREFER_BT_WHILE_STREAMING = "prefer_bt_while_streaming"
 CONF_PREFER_BT_WHILE_DISCOVERABLE = "prefer_bt_while_discoverable"
 CONF_PAUSE_WIFI_SOURCES_ON_CONNECT = "pause_wifi_sources_on_connect"
 
-# Written to sdkconfig. Follows use_psram unless the user overrides it.
-# A2DP is Classic BT, which only exists on original ESP32; I2S DMA there
-# cannot use PSRAM, so the BT heap must leave internal SRAM when PSRAM is on.
+# Written to sdkconfig. Default true, matching main: Classic BT heap in PSRAM
+# so I2S DMA (internal SRAM only on original ESP32) can still allocate.
 _SDKCONFIG_BT_ALLOC_SPIRAM_FIRST = "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST"
 
 
@@ -95,8 +94,10 @@ def require_classic_bluetooth(value):
 
 
 def _apply_bt_allocation_default(config: ConfigType) -> ConfigType:
+    # main always set CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST. Forcing the BT
+    # heap into internal SRAM is what starved I2S DMA on original ESP32.
     if CONF_BT_ALLOCATION_IN_PSRAM not in config:
-        config[CONF_BT_ALLOCATION_IN_PSRAM] = bool(config.get(CONF_USE_PSRAM, False))
+        config[CONF_BT_ALLOCATION_IN_PSRAM] = True
     return config
 
 BLE_COMPONENTS = {
@@ -321,13 +322,13 @@ async def to_code(config: ConfigType) -> None:
         add_idf_sdkconfig_option(
             _SDKCONFIG_BT_ALLOC_SPIRAM_FIRST, config[CONF_BT_ALLOCATION_IN_PSRAM]
         )
-        if config.get(CONF_USE_PSRAM) and not config[CONF_BT_ALLOCATION_IN_PSRAM]:
+        if not config[CONF_BT_ALLOCATION_IN_PSRAM]:
             _LOGGER.warning(
-                "a2dp: bt_allocation_in_psram is false while use_psram is true. "
+                "a2dp: bt_allocation_in_psram is false. "
                 "I2S DMA buffers require internal SRAM; Bluetooth Classic often "
                 "exhausts that heap, and the speaker fails with "
                 "'allocate DMA buffer failed'. Leave bt_allocation_in_psram unset "
-                "(it follows use_psram) or set it true / "
+                "(defaults to true, as on main) or set "
                 "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: y."
             )
     add_idf_sdkconfig_option("CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY", True)

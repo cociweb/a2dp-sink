@@ -39,22 +39,16 @@ void A2DPSinkMediaSource::setup() {
   this->parent_->add_on_audio_streaming_callback([this](bool streaming) {
     if (this->pending_stop_)
       return;
+    // Match main: ignore streaming events while IDLE. YAML play_media (or an
+    // explicit a2dp:// URI) owns source switching — auto play_uri() here stole
+    // Sendspin and raced the orchestrator.
+    if (this->get_state() == media_source::MediaSourceState::IDLE)
+      return;
     if (streaming) {
-      // Phone pressed play after we went IDLE (pipeline warm-up gave up, or a
-      // previous drain finished). Restart the reader instead of dropping the event.
-      if (this->get_state() == media_source::MediaSourceState::IDLE) {
-        this->play_uri(A2DP_URI);
-        return;
-      }
       xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN | EVT_CMD_PAUSE);
       xEventGroupSetBits(this->event_group_, EVT_CMD_START);
     } else {
-      if (this->get_state() == media_source::MediaSourceState::IDLE)
-        return;
-      // Clear EVT_CMD_START so the reader's drain branch does not immediately
-      // mistake the still-set start bit for a stream resume: leaving it set would
-      // cancel the drain every iteration, so the task would never finish draining,
-      // never suspend, and instead spin on the empty ring buffer counting underruns.
+      // Keep this disconnect-fix bugfix: clear EVT_CMD_START so drain can finish.
       xEventGroupClearBits(this->event_group_, EVT_CMD_START);
       xEventGroupSetBits(this->event_group_, EVT_CMD_DRAIN);
     }

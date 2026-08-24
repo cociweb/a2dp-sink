@@ -60,7 +60,7 @@ a2dp:
 - **use_psram** (*Optional*, default `false`): Prefer PSRAM for the PCM ring buffer.
 - **preferred_sample_rate** (*Optional*, default `auto`): Preferred SBC sample rate. Supported values are `auto`, `44100`, and `48000`.
 - **preferred_bits_per_sample** (*Optional*, default `16`): Output PCM width used by the media source path. Supported values are `16` and `32`.
-- **bt_allocation_in_psram** (*Optional*): When `true`, Bluetooth stack allocations prefer PSRAM (`CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=y`). Default follows **`use_psram`**. A2DP is Bluetooth Classic, which only exists on original ESP32; I2S DMA on that chip cannot use PSRAM, so if `use_psram` is on the BT heap must leave internal SRAM or speaker start fails with `allocate DMA buffer failed`. A value already set in `esp32.framework.sdkconfig_options` is not overwritten.
+- **bt_allocation_in_psram** (*Optional*, default `true`): Bluetooth stack allocations prefer PSRAM (`CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST=y`). This matches `main`: I2S DMA on original ESP32 cannot use PSRAM, so the Classic BT heap must not live in internal SRAM or speaker start fails with `allocate DMA buffer failed`. A value already set in `esp32.framework.sdkconfig_options` is not overwritten.
 - **diagnostics** (*Optional*, default `false`): Emit a low-frequency (~10s) debug log line with ring-buffer fill level, high-water mark, bytes received, dropped/overflow bytes, and free internal/PSRAM heap. Useful for isolating realtime audio problems without per-packet logging.
 - **coexistence** (*Optional*): Wi-Fi/Bluetooth coexistence tuning. YAML keys are unchanged on ESPHome 2026.8+; software coexistence is requested through the ESP32 network reconciler and does not load the ESPHome BLE stack. Preferring BT also disables Wi-Fi modem-sleep for the duration so the shared radio is not parked away from A2DP.
 
@@ -219,11 +219,10 @@ keep that path healthy and make stutter observable instead of guesswork:
   bus. The BT stack's constant PSRAM traffic then stalls the reader task's execution, so its
   loop rate drops below the fixed A2DP arrival rate and the ring buffer overflows **even with
   zero packet loss / zero `dropped` bytes** (the tell-tale is a healthy `rx` but a `loop_rate`
-  well under ~84/s at 44100 Hz stereo). With `use_psram: true` the BT heap follows
-  into PSRAM (`bt_allocation_in_psram` defaults to the same value) so I2S DMA still
-  has internal SRAM. Keep the reader task stack in internal RAM
-  (`task_stack_in_psram: false`); if you hear stutter, that is the first thing to
-  move off PSRAM, not the BT heap.
+  well under ~84/s at 44100 Hz stereo). `bt_allocation_in_psram` still defaults
+  to **true** (same as `main`) so I2S DMA keeps internal SRAM. Keep the reader
+  task stack in internal RAM (`task_stack_in_psram: false`); if you hear stutter,
+  that is the first thing to move off PSRAM, not the BT heap.
 - **Give Bluetooth the radio while streaming.** The ESP32 shares a single 2.4 GHz
   radio between Wi-Fi and Bluetooth. With Wi-Fi power-save (modem sleep) enabled — the
   ESP-IDF default — the radio periodically parks on Wi-Fi and starves the realtime
