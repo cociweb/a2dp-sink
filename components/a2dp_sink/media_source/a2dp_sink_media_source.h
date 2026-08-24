@@ -75,11 +75,14 @@ static constexpr EventBits_t EVT_CMD_FLUSH = BIT6;  ///< track changed, discard 
 static constexpr EventBits_t EVT_TASK_WANT_IDLE  = BIT4;
 /// Task has suspended; main loop may safely call task_.deallocate().
 static constexpr EventBits_t EVT_TASK_SUSPENDED  = BIT5;
+/// BT audio paused but ACL is still up — stay PAUSED so speaker_source does not
+/// finish() I2S (DMA realloc fails while Classic BT holds internal SRAM).
+static constexpr EventBits_t EVT_TASK_WANT_PAUSE = BIT7;
 
 static constexpr EventBits_t EVT_ALL_CMD_BITS =
     EVT_CMD_START | EVT_CMD_STOP | EVT_CMD_PAUSE | EVT_CMD_DRAIN | EVT_CMD_FLUSH;
 static constexpr EventBits_t EVT_ALL_BITS =
-    EVT_ALL_CMD_BITS | EVT_TASK_WANT_IDLE | EVT_TASK_SUSPENDED;
+    EVT_ALL_CMD_BITS | EVT_TASK_WANT_IDLE | EVT_TASK_SUSPENDED | EVT_TASK_WANT_PAUSE;
 
 /**
  * @brief A MediaSource that consumes audio data from an A2DPSink ring buffer.
@@ -90,8 +93,10 @@ static constexpr EventBits_t EVT_ALL_BITS =
  *   - play_uri("a2dp://stream") → starts the reader FreeRTOS task, reports PLAYING.
  *   - BT source starts streaming → PCM data flows from the ring buffer to the
  *     speaker pipeline via write_output().
- *   - BT audio stopped / disconnected → drains the ring buffer for
- *     pcm_drain_throttle_ms_, suspends, then main loop reports IDLE.
+ *   - BT audio stopped (ACL still up) → drain, keep the reader in PAUSE wait
+ *     (do not deallocate), main loop reports PAUSED so speaker_source does not
+ *     finish() I2S (DMA cannot realloc under Classic BT).
+ *   - BT disconnected / STOP → drain or stop, then IDLE.
  *   - handle_command(STOP) → signals task to stop; main loop reports IDLE.
  *
  * Threading:

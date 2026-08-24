@@ -289,6 +289,8 @@ class A2DP : public Component {
   wifi_ps_type_t saved_wifi_ps_{WIFI_PS_MIN_MODEM};
   /// @brief True while saved_wifi_ps_ holds a mode to restore (BT is currently prioritised).
   bool wifi_ps_saved_{false};
+  uint32_t coex_apply_at_{0};
+  bool pending_coex_prefer_bt_{false};
 #endif
 
   // --- Runtime state ---

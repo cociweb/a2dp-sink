@@ -45,6 +45,11 @@ static constexpr uint32_t RECONNECT_INITIAL_DELAY_MS = 1000;
 static constexpr uint32_t RECONNECT_RETRY_DELAY_MS = 3000;
 static constexpr uint8_t RECONNECT_MAX_ATTEMPTS = 5;
 static constexpr uint32_t DIAGNOSTICS_LOG_INTERVAL_MS = 10000;
+// HCI/AVRCP commands issued in the same loop as "A2DP audio started" race
+// Bluedroid's HCI filter (filter_incoming_event) and reboot. Wait until SBC
+// is past the sniff→active transition.
+static constexpr uint32_t AVRCP_AFTER_AUDIO_MS = 1000;
+static constexpr uint32_t COEX_AFTER_AUDIO_MS = 250;
 
 static void format_bda_(const esp_bd_addr_t bda, char *buf, size_t len) {
   snprintf(buf, len, "%02X:%02X:%02X:%02X:%02X:%02X", bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
@@ -223,6 +228,14 @@ void A2DP::loop() {
   if (this->metadata_refresh_at_ != 0 && millis() >= this->metadata_refresh_at_) {
     this->metadata_refresh_at_ = 0;
     this->request_avrcp_metadata();
+    this->request_avrcp_track_change_notification();
+  }
+#endif
+
+#ifdef USE_SOFTWARE_COEXISTENCE
+  if (this->coex_apply_at_ != 0 && millis() >= this->coex_apply_at_) {
+    this->coex_apply_at_ = 0;
+    this->set_coex_preference_(this->pending_coex_prefer_bt_);
   }
 #endif
 
@@ -254,12 +267,12 @@ void A2DP::loop() {
           if (!this->keep_discoverable_after_connect_)
             this->stop_discovery_();
           ESP_LOGI(TAG, "BT connected");
-#ifdef USE_SOFTWARE_COEXISTENCE
-          if (this->software_coexistence_ && !this->prefer_bt_while_discoverable_)
-            this->set_coex_preference_(true);
-#endif
-          this->apply_wifi_pause_(true);
           this->connection_callback_.call(true);
+          // Do not prefer BT / disable Wi-Fi PS here. That used to run because
+          // prefer_bt_while_discoverable is false, and it killed the API/web
+          // server as soon as a phone connected — before audio even started.
+          // Coexistence is applied from AUDIO_STARTED (deferred).
+          this->apply_wifi_pause_(true);
         }
         break;
 
@@ -267,6 +280,12 @@ void A2DP::loop() {
         if (this->pending_deinit_) {
           this->connected_ = false;
           this->audio_streaming_ = false;
+#ifdef USE_SOFTWARE_COEXISTENCE
+          this->coex_apply_at_ = 0;
+#endif
+#ifdef USE_A2DP_AVRCP
+          this->metadata_refresh_at_ = 0;
+#endif
           this->connection_callback_.call(false);
           this->audio_state_callback_.call(false);
           this->finish_disable_();
@@ -279,8 +298,12 @@ void A2DP::loop() {
           this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
           ESP_LOGI(TAG, "BT disconnected");
 #ifdef USE_SOFTWARE_COEXISTENCE
+          this->coex_apply_at_ = 0;
           if (this->software_coexistence_)
             this->set_coex_preference_(false);
+#endif
+#ifdef USE_A2DP_AVRCP
+          this->metadata_refresh_at_ = 0;
 #endif
           this->apply_wifi_pause_(false);
           this->connection_callback_.call(false);
@@ -308,11 +331,13 @@ void A2DP::loop() {
                    (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL), dma_largest_free_(),
                    (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 #ifdef USE_SOFTWARE_COEXISTENCE
-          if (this->software_coexistence_ && this->prefer_bt_while_streaming_)
-            this->set_coex_preference_(true);
+          if (this->software_coexistence_ && this->prefer_bt_while_streaming_) {
+            this->pending_coex_prefer_bt_ = true;
+            this->coex_apply_at_ = millis() + COEX_AFTER_AUDIO_MS;
+          }
 #endif
 #ifdef USE_A2DP_AVRCP
-          this->request_avrcp_metadata();
+          this->metadata_refresh_at_ = millis() + AVRCP_AFTER_AUDIO_MS;
 #endif
           this->audio_state_callback_.call(true);
         }
@@ -324,8 +349,12 @@ void A2DP::loop() {
           this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
           ESP_LOGI(TAG, "A2DP audio stopped");
 #ifdef USE_SOFTWARE_COEXISTENCE
+          this->coex_apply_at_ = 0;
           if (this->software_coexistence_ && this->prefer_bt_while_streaming_)
             this->set_coex_preference_(false);
+#endif
+#ifdef USE_A2DP_AVRCP
+          this->metadata_refresh_at_ = 0;
 #endif
           this->audio_state_callback_.call(false);
         }
@@ -360,10 +389,7 @@ void A2DP::loop() {
         this->avrcp_ct_connected_ = true;
         ESP_LOGD(TAG, "AVRCP CT connected");
         this->avrcp_ct_state_callback_.call(true);
-        this->request_avrcp_metadata();
-        this->request_avrcp_track_change_notification();
-        // If audio was playing when the link dropped and the source did not
-        // resume on its own, ask it to resume now that control is back up.
+        this->metadata_refresh_at_ = millis() + AVRCP_AFTER_AUDIO_MS;
         if (this->resume_playback_on_reconnect_ && !this->audio_streaming_) {
           ESP_LOGI(TAG, "Resuming playback after reconnect");
           this->send_avrc_passthrough(ESP_AVRC_PT_CMD_PLAY);
@@ -458,8 +484,12 @@ void A2DP::disable() {
   this->resume_playback_on_reconnect_ = false;
   this->stop_discovery_();
 #ifdef USE_SOFTWARE_COEXISTENCE
+  this->coex_apply_at_ = 0;
   if (this->software_coexistence_)
     this->set_coex_preference_(false);
+#endif
+#ifdef USE_A2DP_AVRCP
+  this->metadata_refresh_at_ = 0;
 #endif
   this->apply_wifi_pause_(false);
 

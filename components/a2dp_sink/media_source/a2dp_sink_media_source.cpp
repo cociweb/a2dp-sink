@@ -45,8 +45,12 @@ void A2DPSinkMediaSource::setup() {
     if (this->get_state() == media_source::MediaSourceState::IDLE)
       return;
     if (streaming) {
+      this->start_task_();
       xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN | EVT_CMD_PAUSE);
       xEventGroupSetBits(this->event_group_, EVT_CMD_START);
+      // Resume from PAUSED (phone unpaused). Callbacks run on the main loop.
+      if (this->get_state() == media_source::MediaSourceState::PAUSED)
+        this->set_state_(media_source::MediaSourceState::PLAYING);
     } else {
       // Keep this disconnect-fix bugfix: clear EVT_CMD_START so drain can finish.
       xEventGroupClearBits(this->event_group_, EVT_CMD_START);
@@ -77,6 +81,12 @@ void A2DPSinkMediaSource::loop() {
     return;
 
   EventBits_t bits = xEventGroupGetBits(this->event_group_);
+
+  if (bits & EVT_TASK_WANT_PAUSE) {
+    xEventGroupClearBits(this->event_group_, EVT_TASK_WANT_PAUSE);
+    if (!this->pending_stop_)
+      this->set_state_(media_source::MediaSourceState::PAUSED);
+  }
 
   // Task wants to transition the orchestrator to IDLE.
   if (bits & EVT_TASK_WANT_IDLE) {
@@ -164,7 +174,8 @@ void A2DPSinkMediaSource::handle_command(media_source::MediaSourceCommand comman
 #ifdef USE_A2DP_AVRCP
       this->parent_->get_parent()->send_avrc_passthrough(ESP_AVRC_PT_CMD_PAUSE);
 #endif
-      xEventGroupClearBits(this->event_group_, EVT_ALL_CMD_BITS | EVT_TASK_WANT_IDLE);
+      xEventGroupClearBits(this->event_group_,
+                          EVT_ALL_CMD_BITS | EVT_TASK_WANT_IDLE | EVT_TASK_WANT_PAUSE);
       xEventGroupSetBits(this->event_group_, EVT_CMD_STOP);
       if (this->task_.is_created()) {
         this->pending_stop_ = true;
@@ -319,7 +330,8 @@ void A2DPSinkMediaSource::reader_task_() {
     }
 
     if (bits & EVT_CMD_DRAIN) {
-      // BT audio stopped: drain remaining ring buffer data, then signal IDLE.
+      // BT audio stopped: drain remaining ring buffer data, then pause (ACL up)
+      // or go IDLE (link gone / STOP).
       uint32_t drain_waited = 0;
       while (drain_waited < drain_ms) {
         bits = xEventGroupGetBits(this->event_group_);
@@ -354,12 +366,12 @@ void A2DPSinkMediaSource::reader_task_() {
                    (unsigned) zero_write_count);
           this->parent_->get_parent()->set_audio_output_enabled(false);
           this->parent_->get_parent()->request_audio_suspend();
-          goto task_exit_with_idle;
+          goto pause_or_idle_after_audio_stop;
         }
       }
-      // Drain timeout expired — signal the main loop to report IDLE.
+      // Drain timeout expired — pause while ACL is up, otherwise IDLE.
       xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN);
-      goto task_exit_with_idle;
+      goto pause_or_idle_after_audio_stop;
     }
 
     if (bits & EVT_CMD_PAUSE) {
@@ -407,9 +419,27 @@ read_chunk:
                  (unsigned) zero_write_count, have_written_output ? "yes" : "no");
         this->parent_->get_parent()->set_audio_output_enabled(false);
         this->parent_->get_parent()->request_audio_suspend();
-        goto task_exit_with_idle;
+        goto pause_or_idle_after_audio_stop;
       }
     }
+    continue;
+
+pause_or_idle_after_audio_stop:
+    if (audio_source->available() > 0)
+      audio_source->consume(audio_source->available());
+    this->parent_->get_parent()->reset_audio_buffer();
+    // Keep the reader allocated and report PAUSED while ACL is up so
+    // speaker_source does not finish() I2S (DMA realloc fails under Classic BT).
+    if (this->parent_->get_parent()->is_connected()) {
+      ESP_LOGD(TAG, "Reader task: audio stopped, staying PAUSED (ACL up)");
+      need_preroll = true;
+      zero_write_count = 0;
+      xEventGroupClearBits(this->event_group_, EVT_CMD_DRAIN | EVT_CMD_START);
+      xEventGroupSetBits(this->event_group_, EVT_CMD_PAUSE | EVT_TASK_WANT_PAUSE);
+      App.wake_loop_threadsafe();
+      continue;
+    }
+    goto task_exit_with_idle;
   }
 
 task_exit_with_idle:

@@ -46,13 +46,14 @@ Sendspin `STOP` sets client state `EXTERNAL_SOURCE` and does **not** go IDLE unt
 | Ignore `AUDIO_STARTED` when media source is IDLE | `play_uri("a2dp://stream")` / `request_play_uri_` from that callback |
 | `disable()`: disconnect, wait for ACL, then `deinit_bt_()` | `deinit_bt_()` immediately in `disable()` |
 | Clear `EVT_CMD_START` when starting drain | Leave START set so drain cancels every loop |
+| On BT audio stop while ACL is up, report **PAUSED** (keep I2S) | Report IDLE on phone pause — `speaker_source` `finish()`es DMA and realloc fails |
 | Treat mixer warm-up zero-writes as start-up (`ZERO_WRITE_STARTUP_STOP_COUNT`) | Treat first 3×100 ms of 0-byte writes as a dead speaker |
 | Keep reader chunk at 2048; stack in **internal** RAM if A2DP stutters with `use_psram: true` | Put PCM ring **and** BT heap **and** reader stack in PSRAM at once |
 | Enable `diagnostics: true` / media_source `debug_logging: true` for one device | Raise log level globally and drown the serial |
 
 ## Keep vs drop (`disconnect-fix` vs `main`)
 
-**Keep:** `a2dp.disconnect`; deferred `disable()` teardown; drain START-bit clear; ESPHome 2026.8 coexistence / `request_bluetooth` / IDF 5.1 sdkconfig names; original-ESP32-only check; auto-reconnect + AVRCP resume; preroll; reader prio 10; zero-write start-up grace; `diagnostics` default off.
+**Keep:** `a2dp.disconnect`; deferred `disable()` teardown; drain START-bit clear; ESPHome 2026.8 coexistence / `request_bluetooth` / IDF 5.1 sdkconfig names; original-ESP32-only check; auto-reconnect + AVRCP resume; preroll; reader prio 10; zero-write start-up grace; `diagnostics` default off; PAUSED (not IDLE) when BT audio stops but ACL is still up.
 
 **Drop / never reintroduce:** BT heap default following `use_psram` in a way that can be false; IDLE `AUDIO_STARTED` auto-play; vendoring `speaker_source`; Sendspin `STOP` → IDLE as an I2S workaround.
 
@@ -66,5 +67,7 @@ See [debugging.md](debugging.md) iteration log for dated field reports.
 4. `allocate DMA buffer failed` on **Sendspin start** (no `A2DP audio started` in the snippet) is the **same** DMA-heap failure, not a Sendspin bug. Chunk warnings are secondary. YAML `CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: y` does not prove DMA can allocate — need `dma_largest`. Do not overlay `speaker_source`.
 5. If A2DP plays 1–2 s then goes silent with no I2S error, look at zero-write suspend and `AUDIO_STARTED` while IDLE.
 6. If disable/reboot shows `bta_dm_disable` / `IllegalInstruction` in the BT task, teardown raced ACL.
+7. `IllegalInstruction` in `esp_vApplicationTickHook` is the **abort path**, not the bug. Read `__assert_func` then its caller. `hci_layer` / `EXCVADDR: 0` + mixed `btc_a2dp_source_*` frames on a sink = heap smash / stale HCI packet — check firmware date before writing code. IDF compiles A2DP source into every `CONFIG_BT_A2DP_ENABLE` binary.
+8. Reboot immediately after `A2DP audio started` (`mode 0`, `conn_srvc id:19`), with or without Sendspin: do **not** call `esp_wifi_set_ps` or `esp_avrc_ct_send_*` in that same loop. Defer coex and AVRCP. `[a2dp:287]` is not a firmware-age fingerprint.
 
 HA addon YAML under Docker/CIFS is often not writable from this environment. Copy keys into the addon configs yourself, or compile from a writable checkout.
