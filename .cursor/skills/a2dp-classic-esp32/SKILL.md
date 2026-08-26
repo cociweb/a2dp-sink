@@ -51,11 +51,11 @@ Sendspin `STOP` sets client state `EXTERNAL_SOURCE` and does **not** go IDLE unt
 | Keep reader chunk at 2048; stack in **internal** RAM if A2DP stutters with `use_psram: true` | Put PCM ring **and** BT heap **and** reader stack in PSRAM at once |
 | Enable `diagnostics: true` / media_source `debug_logging: true` for one device | Raise log level globally and drown the serial |
 | Fix A2DP-side bugs in the `a2dp`/`a2dp-sink` component (ships via `github://cociweb/a2dp-sink@…`) | Rely on a live-device YAML edit as the fix — HA addon YAML under Docker/CIFS is often read-only from this checkout, and per-device YAML drift is not wanted |
-| Auto-reconnect only when `DISCONNECTED`'s `disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL` (signal loss) | Auto-reconnect on every `DISCONNECTED` regardless of `disc_rsn` — fights a phone's explicit, graceful disconnect (`NORMAL`) |
+| Auto-reconnect only when `DISCONNECTED`'s `disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL` **and** `was_streaming` (audio was actually flowing) | Auto-reconnect on every `DISCONNECTED` regardless of `disc_rsn`/streaming state — fights a phone's explicit, graceful disconnect of an idle link, and `disc_rsn` alone is not reliable on all phones |
 
 ## Keep vs drop (`disconnect-fix` vs `main`)
 
-**Keep:** `a2dp.disconnect`; deferred `disable()` teardown; drain START-bit clear; ESPHome 2026.8 coexistence / `request_bluetooth` / IDF 5.1 sdkconfig names; original-ESP32-only check; auto-reconnect + AVRCP resume **gated on `disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL`**; preroll; reader prio 10; zero-write start-up grace; `diagnostics` default off; PAUSED (not IDLE) when BT audio stops but ACL is still up; guarded `request_play_uri_()` when `AUDIO_STARTED` fires while IDLE.
+**Keep:** `a2dp.disconnect`; deferred `disable()` teardown; drain START-bit clear; ESPHome 2026.8 coexistence / `request_bluetooth` / IDF 5.1 sdkconfig names; original-ESP32-only check; auto-reconnect + AVRCP resume **gated on `disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL` AND `was_streaming`** (disc_rsn alone is unreliable — some phones report ABNORMAL even for a graceful disconnect via a Bluedroid sniff-exit race); preroll; reader prio 10; zero-write start-up grace; `diagnostics` default off; PAUSED (not IDLE) when BT audio stops but ACL is still up; guarded `request_play_uri_()` when `AUDIO_STARTED` fires while IDLE.
 
 **Drop / never reintroduce:** BT heap default following `use_psram` in a way that can be false; a **direct** `play_uri()` call from `AUDIO_STARTED` (bypasses the orchestrator — use `request_play_uri_()` instead, and only while IDLE); vendoring `speaker_source`; Sendspin `STOP` → IDLE as an I2S workaround.
 

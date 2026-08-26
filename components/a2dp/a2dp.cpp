@@ -296,7 +296,8 @@ void A2DP::loop() {
           this->connected_ = false;
           this->audio_streaming_ = false;
           this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
-          ESP_LOGI(TAG, "BT disconnected");
+          ESP_LOGI(TAG, "BT disconnected (reason=%s)",
+                   ev.disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL ? "abnormal" : "normal");
 #ifdef USE_SOFTWARE_COEXISTENCE
           this->coex_apply_at_ = 0;
           if (this->software_coexistence_)
@@ -311,19 +312,28 @@ void A2DP::loop() {
           // Proactively reconnect after an unexpected link loss (e.g. supervision
           // timeout during WiFi activity) instead of passively waiting for the
           // source. Remember whether audio was playing so it can be resumed.
-          // Only do this for ABNORMAL disconnects (signal loss) — a NORMAL
-          // disconnect means the phone (or we) closed the link gracefully via
-          // proper AVDTP/ACL signaling, e.g. the user tapped "Disconnect" on the
-          // phone. Reconnecting in that case would fight the phone's explicit
-          // request instead of respecting it.
-          if (ev.disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL && this->enabled_ && this->auto_reconnect_ &&
-              this->has_last_peer_) {
+          //
+          // Gate on BOTH signals:
+          //  - disc_rsn == ABNORMAL: the ESP-IDF/Bluedroid-reported reason. In
+          //    practice this is NOT fully reliable — some phones (e.g. Nokia G60
+          //    5G) trigger a Bluedroid-internal race when exiting sniff mode
+          //    ("bta_dm_act no entry for connected service cbs") even on an
+          //    explicit, graceful phone-initiated disconnect, which gets reported
+          //    as ABNORMAL anyway.
+          //  - was_streaming: audio was actually flowing when the link dropped.
+          //    This is the one case the reconnect feature was built for
+          //    (mid-playback WiFi-interference drop). A connection that was just
+          //    sitting idle (ACL/AVRCP up, no SBC data) when it dropped is far
+          //    more likely an explicit disconnect the phone/user wanted — do not
+          //    fight that just because Bluedroid mislabels the reason.
+          if (ev.disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL && was_streaming && this->enabled_ &&
+              this->auto_reconnect_ && this->has_last_peer_) {
             this->resume_playback_on_reconnect_ = was_streaming;
             this->reconnect_attempts_ = 0;
             this->reconnect_at_ = millis() + RECONNECT_INITIAL_DELAY_MS;
             ESP_LOGI(TAG, "Will attempt to reconnect to last source");
-          } else if (ev.disc_rsn == ESP_A2D_DISC_RSN_NORMAL) {
-            ESP_LOGI(TAG, "Graceful disconnect — not auto-reconnecting");
+          } else if (this->enabled_ && this->auto_reconnect_ && this->has_last_peer_) {
+            ESP_LOGI(TAG, "Disconnected while idle or gracefully — not auto-reconnecting");
           }
           this->start_discovery_();
         }
