@@ -311,11 +311,19 @@ void A2DP::loop() {
           // Proactively reconnect after an unexpected link loss (e.g. supervision
           // timeout during WiFi activity) instead of passively waiting for the
           // source. Remember whether audio was playing so it can be resumed.
-          if (this->enabled_ && this->auto_reconnect_ && this->has_last_peer_) {
+          // Only do this for ABNORMAL disconnects (signal loss) — a NORMAL
+          // disconnect means the phone (or we) closed the link gracefully via
+          // proper AVDTP/ACL signaling, e.g. the user tapped "Disconnect" on the
+          // phone. Reconnecting in that case would fight the phone's explicit
+          // request instead of respecting it.
+          if (ev.disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL && this->enabled_ && this->auto_reconnect_ &&
+              this->has_last_peer_) {
             this->resume_playback_on_reconnect_ = was_streaming;
             this->reconnect_attempts_ = 0;
             this->reconnect_at_ = millis() + RECONNECT_INITIAL_DELAY_MS;
             ESP_LOGI(TAG, "Will attempt to reconnect to last source");
+          } else if (ev.disc_rsn == ESP_A2D_DISC_RSN_NORMAL) {
+            ESP_LOGI(TAG, "Graceful disconnect — not auto-reconnecting");
           }
           this->start_discovery_();
         }
@@ -830,6 +838,7 @@ void A2DP::handle_a2d_event_(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param
         xQueueSend(this->event_queue_, &ev, 0);
       } else if (state == ESP_A2D_CONNECTION_STATE_DISCONNECTED) {
         ev.type = A2DPEvent::DISCONNECTED;
+        ev.disc_rsn = param->conn_stat.disc_rsn;
         xQueueSend(this->event_queue_, &ev, 0);
       }
       break;

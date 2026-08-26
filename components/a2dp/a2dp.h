@@ -62,6 +62,7 @@ struct A2DPEventRecord {
   uint8_t max_bitpool;
   uint8_t volume;  ///< AVRCP_VOLUME_CHANGED: 0-127
   uint8_t metadata_attr;
+  esp_a2d_disc_rsn_t disc_rsn;  ///< DISCONNECTED: NORMAL (graceful) vs ABNORMAL (signal loss)
   esp_bd_addr_t remote_bda;
   char metadata[128];
   char peer_name[ESP_BT_GAP_MAX_BDNAME_LEN + 1];
