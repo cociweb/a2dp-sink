@@ -1,12 +1,27 @@
+from dataclasses import dataclass
+import logging
 from esphome import automation
 import esphome.codegen as cg
 from esphome.components.esp32 import add_idf_sdkconfig_option
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
-from esphome.core import ID
+from esphome.core import CORE, ID
 from esphome.cpp_generator import TemplateArgsType
 import esphome.final_validate as fv
 from esphome.types import ConfigType
+
+try:
+    from esphome.components.esp32 import idf_version, request_bluetooth
+except ImportError:
+    # ESPHome < 2026.8 wrote these sdkconfig flags directly from each component.
+    def request_bluetooth() -> None:
+        add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+
+    def idf_version() -> cv.Version:
+        return cv.Version(5, 0, 0)
+
+_LOGGER = logging.getLogger(__name__)
+DOMAIN = "a2dp"
 
 CODEOWNERS = ["@cociweb"]
 DEPENDENCIES = ["esp32"]
@@ -23,11 +38,67 @@ CONF_KEEP_DISCOVERABLE_AFTER_CONNECT = "keep_discoverable_after_connect"
 CONF_PAIRING_PIN = "pairing_pin"
 CONF_PREFERRED_SAMPLE_RATE = "preferred_sample_rate"
 CONF_PREFERRED_BITS_PER_SAMPLE = "preferred_bits_per_sample"
+CONF_BT_ALLOCATION_IN_PSRAM = "bt_allocation_in_psram"
+CONF_DIAGNOSTICS = "diagnostics"
 CONF_COEXISTENCE = "coexistence"
 CONF_SOFTWARE_COEXISTENCE = "software_coexistence"
 CONF_PREFER_BT_WHILE_STREAMING = "prefer_bt_while_streaming"
 CONF_PREFER_BT_WHILE_DISCOVERABLE = "prefer_bt_while_discoverable"
 CONF_PAUSE_WIFI_SOURCES_ON_CONNECT = "pause_wifi_sources_on_connect"
+
+# Written to sdkconfig. Default true, matching main: Classic BT heap in PSRAM
+# so I2S DMA (internal SRAM only on original ESP32) can still allocate.
+_SDKCONFIG_BT_ALLOC_SPIRAM_FIRST = "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST"
+
+
+def _sdkconfig_already_set(name: str) -> bool:
+    """True if YAML sdkconfig_options (or an earlier component) already set ``name``."""
+    try:
+        from esphome.components.esp32.const import KEY_ESP32, KEY_SDKCONFIG_OPTIONS
+    except ImportError:
+        return False
+    opts = CORE.data.get(KEY_ESP32, {}).get(KEY_SDKCONFIG_OPTIONS, {})
+    return name in opts
+
+
+def require_classic_bluetooth(value):
+    """Reject targets that have no Bluetooth Classic (BR/EDR) controller.
+
+    A2DP/AVRCP are Classic-only. Original ESP32 is the only ESPHome ESP32
+    variant with BR/EDR; S3/C3/C6/H2/P4/S2 are BLE-only or have no radio.
+    """
+    if not CORE.is_esp32:
+        raise cv.Invalid(
+            "a2dp requires Bluetooth Classic (BR/EDR), which is only available "
+            "on original ESP32"
+        )
+    try:
+        from esphome.components.esp32 import VARIANT_ESP32, get_esp32_variant
+        from esphome.components.esp32.const import VARIANT_FRIENDLY
+    except ImportError:
+        return value
+    try:
+        variant = get_esp32_variant()
+    except (KeyError, TypeError) as err:
+        raise cv.Invalid(
+            "a2dp requires Bluetooth Classic (BR/EDR) on original ESP32, "
+            "but the ESP32 variant could not be determined"
+        ) from err
+    if variant != VARIANT_ESP32:
+        name = VARIANT_FRIENDLY.get(variant, variant)
+        raise cv.Invalid(
+            f"a2dp requires Bluetooth Classic (BR/EDR). {name} does not support "
+            f"Classic Bluetooth. Use original ESP32 (WROOM/WROVER)."
+        )
+    return value
+
+
+def _apply_bt_allocation_default(config: ConfigType) -> ConfigType:
+    # main always set CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST. Forcing the BT
+    # heap into internal SRAM is what starved I2S DMA on original ESP32.
+    if CONF_BT_ALLOCATION_IN_PSRAM not in config:
+        config[CONF_BT_ALLOCATION_IN_PSRAM] = True
+    return config
 
 BLE_COMPONENTS = {
     "bluetooth_proxy",
@@ -37,7 +108,19 @@ BLE_COMPONENTS = {
     "esp32_ble_server",
     "esp32_ble_beacon",
 }
-ble_required = False
+
+
+@dataclass
+class A2DPData:
+    ble_required: bool = False
+    has_wifi: bool = False
+
+
+def _data() -> A2DPData:
+    if DOMAIN not in CORE.data:
+        CORE.data[DOMAIN] = A2DPData()
+    return CORE.data[DOMAIN]
+
 
 SAMPLE_RATE_BUILD_FLAGS = {
     44100: "A2D_SBC_IE_SAMP_FREQ_44",
@@ -61,6 +144,11 @@ A2DPEnableAction = a2dp_ns.class_(
 )
 A2DPDisableAction = a2dp_ns.class_(
     "A2DPDisableAction",
+    automation.Action,
+    cg.Parented.template(A2DP),
+)
+A2DPDisconnectAction = a2dp_ns.class_(
+    "A2DPDisconnectAction",
     automation.Action,
     cg.Parented.template(A2DP),
 )
@@ -99,17 +187,27 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_PREFERRED_BITS_PER_SAMPLE, default=16): cv.one_of(
                 16, 32, int=True
             ),
+            cv.Optional(CONF_BT_ALLOCATION_IN_PSRAM): cv.boolean,
+            cv.Optional(CONF_DIAGNOSTICS, default=False): cv.boolean,
             cv.Optional(CONF_COEXISTENCE): COEXISTENCE_SCHEMA,
         }
     ).extend(cv.COMPONENT_SCHEMA),
-    cv.only_on_esp32,
+    require_classic_bluetooth,
+    _apply_bt_allocation_default,
 )
 
 
-def final_validate(config):
-    global ble_required
+def final_validate(config: ConfigType) -> ConfigType:
+    data = _data()
     full_config = fv.full_config.get()
-    ble_required = any(component in full_config for component in BLE_COMPONENTS)
+    data.ble_required = any(component in full_config for component in BLE_COMPONENTS)
+    data.has_wifi = "wifi" in full_config
+    if data.ble_required:
+        _LOGGER.warning(
+            "a2dp uses Bluetooth Classic (A2DP/AVRCP). Combining it with ESPHome BLE "
+            "components on original ESP32 is unsupported: the BLE stack enables BLE-only "
+            "mode and releases Classic controller memory."
+        )
     return config
 
 
@@ -129,6 +227,12 @@ A2DP_ACTION_SCHEMA = automation.maybe_simple_id(
 @automation.register_action(
     "a2dp.disable",
     A2DPDisableAction,
+    A2DP_ACTION_SCHEMA,
+    synchronous=True,
+)
+@automation.register_action(
+    "a2dp.disconnect",
+    A2DPDisconnectAction,
     A2DP_ACTION_SCHEMA,
     synchronous=True,
 )
@@ -159,6 +263,7 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_ring_buffer_size(config[CONF_RING_BUFFER_SIZE]))
     cg.add(var.set_use_psram(config[CONF_USE_PSRAM]))
     cg.add(var.set_preferred_bits_per_sample(config[CONF_PREFERRED_BITS_PER_SAMPLE]))
+    cg.add(var.set_diagnostics_enabled(config[CONF_DIAGNOSTICS]))
     if config[CONF_PREFERRED_SAMPLE_RATE] != "auto":
         cg.add_build_flag(
             f"-DBTC_AV_SBC_DEFAULT_SAMP_FREQ={SAMPLE_RATE_BUILD_FLAGS[config[CONF_PREFERRED_SAMPLE_RATE]]}"
@@ -169,24 +274,75 @@ async def to_code(config: ConfigType) -> None:
     if CONF_PAIRING_PIN in config:
         cg.add(var.set_pairing_pin(config[CONF_PAIRING_PIN]))
 
+    data = _data()
+    # Request the BT controller through the 2026.8 network reconciler. This does
+    # not load the ESPHome BLE stack or the IDF BLE host APIs; Classic-only
+    # firmware keeps CONFIG_BT_BLE_ENABLED off below.
+    request_bluetooth()
+    add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+
     if coex := config.get(CONF_COEXISTENCE):
-        cg.add(var.set_software_coexistence(coex[CONF_SOFTWARE_COEXISTENCE]))
+        software_coexistence = coex[CONF_SOFTWARE_COEXISTENCE]
+        cg.add(var.set_software_coexistence(software_coexistence))
         cg.add(var.set_prefer_bt_while_streaming(coex[CONF_PREFER_BT_WHILE_STREAMING]))
         cg.add(var.set_prefer_bt_while_discoverable(coex[CONF_PREFER_BT_WHILE_DISCOVERABLE]))
         cg.add(var.set_pause_wifi_sources_on_connect(coex[CONF_PAUSE_WIFI_SOURCES_ON_CONNECT]))
+        # Always define this when the coexistence block is present so the C++
+        # setters are compiled. The IDF coexist library is only requested when
+        # software_coexistence is actually enabled.
         cg.add_define("USE_SOFTWARE_COEXISTENCE")
+        if software_coexistence and data.has_wifi:
+            # Write the current IDF symbol here. request_software_coexistence()
+            # only sets an ESPHome flag; ESPHome 2026.x then emits the pre-5.1
+            # CONFIG_SW_COEXIST_ENABLE name, which kconfgen rejects on IDF 5.5+.
+            if idf_version() >= cv.Version(5, 1, 0):
+                add_idf_sdkconfig_option("CONFIG_ESP_COEX_SW_COEXIST_ENABLE", True)
+            else:
+                add_idf_sdkconfig_option("CONFIG_SW_COEXIST_ENABLE", True)
+        if coex[CONF_PAUSE_WIFI_SOURCES_ON_CONNECT] and data.has_wifi:
+            from esphome.components import wifi
 
-    add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+            wifi.enable_runtime_power_save_control()
+            wifi.enable_runtime_roaming_suppression()
+            cg.add_define("USE_A2DP_WIFI_PAUSE")
+
     add_idf_sdkconfig_option("CONFIG_BT_CLASSIC_ENABLED", True)
     add_idf_sdkconfig_option("CONFIG_BT_A2DP_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_TG_ENABLE", True)
     add_idf_sdkconfig_option("CONFIG_BT_AVRC_CT_ENABLE", True)
-    add_idf_sdkconfig_option("CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST", True)
+    # Do not clobber a user sdkconfig_options value. Forcing the BT heap into
+    # internal SRAM while use_psram is on starved I2S DMA on original ESP32.
+    if _sdkconfig_already_set(_SDKCONFIG_BT_ALLOC_SPIRAM_FIRST):
+        _LOGGER.debug(
+            "Leaving existing %s (bt_allocation_in_psram=%s)",
+            _SDKCONFIG_BT_ALLOC_SPIRAM_FIRST,
+            config[CONF_BT_ALLOCATION_IN_PSRAM],
+        )
+    else:
+        add_idf_sdkconfig_option(
+            _SDKCONFIG_BT_ALLOC_SPIRAM_FIRST, config[CONF_BT_ALLOCATION_IN_PSRAM]
+        )
+        if not config[CONF_BT_ALLOCATION_IN_PSRAM]:
+            _LOGGER.warning(
+                "a2dp: bt_allocation_in_psram is false. "
+                "I2S DMA buffers require internal SRAM; Bluetooth Classic often "
+                "exhausts that heap, and the speaker fails with "
+                "'allocate DMA buffer failed'. Leave bt_allocation_in_psram unset "
+                "(defaults to true, as on main) or set "
+                "CONFIG_BT_ALLOCATION_FROM_SPIRAM_FIRST: y."
+            )
     add_idf_sdkconfig_option("CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY", True)
-    add_idf_sdkconfig_option("CONFIG_BT_BLE_ENABLED", ble_required)
-    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", not ble_required)
+    add_idf_sdkconfig_option("CONFIG_BT_BLE_ENABLED", data.ble_required)
+    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", not data.ble_required)
     add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BLE_ONLY", False)
-    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BTDM", ble_required)
+    add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BTDM", data.ble_required)
+    if not data.ble_required:
+        # request_bluetooth() would otherwise let the reconciler enable BLE 4.2
+        # features. Keep Classic-only A2DP off the BLE host APIs.
+        add_idf_sdkconfig_option("CONFIG_BT_BLE_42_FEATURES_SUPPORTED", False)
+        add_idf_sdkconfig_option("CONFIG_BT_BLE_50_FEATURES_SUPPORTED", False)
+    else:
+        cg.add_define("USE_A2DP_BTDM")
     if CONF_PAIRING_PIN in config:
         add_idf_sdkconfig_option("CONFIG_BT_SSP_ENABLED", False)
         add_idf_sdkconfig_option("CONFIG_BT_LEGACY_PIN_PAIRING_ENABLED", True)

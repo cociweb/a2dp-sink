@@ -1,15 +1,19 @@
 import esphome.codegen as cg
 from esphome.components import media_source, psram
-from esphome.components.esp32 import add_idf_sdkconfig_option
+from esphome.components.esp32 import add_idf_sdkconfig_option, idf_version
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_TASK_STACK_IN_PSRAM
 from esphome.types import ConfigType
+
+from esphome.components.a2dp import require_classic_bluetooth
 
 from .. import CONF_A2DP_SINK_ID, A2DPSink, a2dp_sink_ns
 
 CODEOWNERS = ["@cociweb"]
 DEPENDENCIES = ["a2dp_sink"]
 AUTO_LOAD = ["audio"]
+
+CONF_DEBUG_LOGGING = "debug_logging"
 
 A2DPSinkMediaSource = a2dp_sink_ns.class_(
     "A2DPSinkMediaSource",
@@ -27,8 +31,11 @@ def validate_task_stack_in_psram(value):
 
 
 def request_external_task_stack() -> None:
-    if hasattr(psram, "request_external_task_stack"):
-        psram.request_external_task_stack()
+    # ESP-IDF 5.5+ renamed CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY.
+    # Set the flag here instead of calling psram.request_external_task_stack(),
+    # which still emits the old name on ESPHome versions that have not been updated.
+    if idf_version() >= cv.Version(5, 5, 0):
+        add_idf_sdkconfig_option("CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM", True)
     else:
         add_idf_sdkconfig_option("CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY", True)
 
@@ -39,10 +46,11 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(CONF_A2DP_SINK_ID): cv.use_id(A2DPSink),
             cv.Optional(CONF_TASK_STACK_IN_PSRAM): validate_task_stack_in_psram,
+            cv.Optional(CONF_DEBUG_LOGGING, default=False): cv.boolean,
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
-    cv.only_on_esp32,
+    require_classic_bluetooth,
 )
 
 
@@ -55,3 +63,5 @@ async def to_code(config: ConfigType) -> None:
     if config.get(CONF_TASK_STACK_IN_PSRAM):
         cg.add(var.set_task_stack_in_psram(True))
         request_external_task_stack()
+
+    cg.add(var.set_debug_logging(config[CONF_DEBUG_LOGGING]))

@@ -1,7 +1,7 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components.a2dp import CONF_A2DP_ID, A2DP, a2dp_ns
+from esphome.components.a2dp import CONF_A2DP_ID, A2DP, a2dp_ns, require_classic_bluetooth
 from esphome.const import CONF_ID
 from esphome.core import ID
 from esphome.cpp_generator import TemplateArgsType
@@ -35,15 +35,15 @@ _CALLBACK_AUTOMATIONS = (
     ),
 )
 
-CONFIG_SCHEMA = (
+CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(A2DPAVRCP),
             cv.GenerateID(CONF_A2DP_ID): cv.use_id(A2DP),
             cv.Optional(CONF_ON_VOLUME_CHANGED): automation.validate_automation({}),
         }
-    )
-    .extend(cv.COMPONENT_SCHEMA)
+    ).extend(cv.COMPONENT_SCHEMA),
+    require_classic_bluetooth,
 )
 
 AVRCP_SIMPLE_ACTION_SCHEMA = automation.maybe_simple_id(
