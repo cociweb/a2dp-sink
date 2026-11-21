@@ -36,6 +36,14 @@ With media_source `debug_logging: true`: `loop_rate`, `underruns`, `partial_writ
 
 ## Iteration log (append, newest first)
 
+### 2026-11-21 — build fails on ESPHome 2026.12 / IDF 6.1: `esp_coexist.h: No such file or directory`
+
+- **Logs:** `a2dp.cpp:15: fatal error: esp_coexist.h: No such file or directory` when moving `sonocotta-nappali` from ESPHome 2026.8.2 (IDF 5.5) to 2026.12.0 (IDF 6.1.1). After that was fixed: `ESP_A2D_AUDIO_STATE_STOPPED` / `ESP_A2D_AUDIO_STATE_REMOTE_SUSPEND` not declared.
+- **Cause:** ESPHome 2026.12 adds `esp_coex` to `DEFAULT_EXCLUDED_IDF_COMPONENTS`, so it is missing from the `src` component's `REQUIRES` and its headers are not on the include path, even though `esp_wifi`/`bt` still link it privately. IDF 6 removed the deprecated A2DP audio-state aliases; both were `= ESP_A2D_AUDIO_STATE_SUSPEND` in IDF 5.5.
+- **Ruled out:** a coex API change. `esp_coex_status_bit_set` and `ESP_COEX_BT_ST_A2DP_*` are unchanged in IDF 6.1.1. No YAML change needed.
+- **Fix:** `include_builtin_idf_component("esp_coex")` whenever the `coexistence` block is present (no-op shim for ESPHome versions without it); compare against `ESP_A2D_AUDIO_STATE_SUSPEND`. Also dropped the deprecated `fill(ticks, false)` second argument in the media source (removed in 2027.5; both call sites only fill an empty buffer, so `pre_shift` had no effect).
+- **Verified:** full `esphome compile` of `sonocotta-nappali` on 2026.12.0-dev / IDF 6.1.1 succeeds. Runtime behaviour not yet confirmed on device.
+
 ### 2026-08-26 — follow-up: `disc_rsn == ABNORMAL` fires even on a confirmed manual phone disconnect (Nokia G60 5G) — added `was_streaming` gate
 
 - **User confirmation:** captured log's two disconnects at 20:49:31 and 20:49:45 were **confirmed manual** — user explicitly tapped disconnect on the phone (Nokia G60 5G) at those exact moments, twice. Both times the device reconnected within ~1 s and the loop repeated.

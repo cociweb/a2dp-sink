@@ -858,7 +858,7 @@ void A2DP::handle_a2d_event_(esp_a2d_cb_event_t event, esp_a2d_cb_param_t *param
       auto state = param->audio_stat.state;
       if (state == ESP_A2D_AUDIO_STATE_STARTED) {
         ev.type = A2DPEvent::AUDIO_STARTED;
-      } else if (state == ESP_A2D_AUDIO_STATE_STOPPED || state == ESP_A2D_AUDIO_STATE_REMOTE_SUSPEND) {
+      } else if (state == ESP_A2D_AUDIO_STATE_SUSPEND) {
         ev.type = A2DPEvent::AUDIO_STOPPED;
       } else {
         break;

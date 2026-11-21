@@ -362,7 +362,7 @@ void A2DPSinkMediaSource::reader_task_() {
           goto read_chunk;
         }
         if (audio_source->available() == 0) {
-          audio_source->fill(pdMS_TO_TICKS(RB_READ_TIMEOUT_MS), false);
+          audio_source->fill(pdMS_TO_TICKS(RB_READ_TIMEOUT_MS));
         }
         size_t available = audio_source->available();
         if (available == 0) {
@@ -405,7 +405,7 @@ read_chunk:
         need_preroll = false;
       }
       if (audio_source->available() == 0) {
-        audio_source->fill(pdMS_TO_TICKS(RB_READ_TIMEOUT_MS), false);
+        audio_source->fill(pdMS_TO_TICKS(RB_READ_TIMEOUT_MS));
       }
       size_t available = audio_source->available();
       if (available == 0) {

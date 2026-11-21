@@ -20,6 +20,13 @@ except ImportError:
     def idf_version() -> cv.Version:
         return cv.Version(5, 0, 0)
 
+try:
+    from esphome.components.esp32 import include_builtin_idf_component
+except ImportError:
+    # Older ESPHome did not exclude unused IDF components from the build.
+    def include_builtin_idf_component(name: str) -> None:
+        pass
+
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = "a2dp"
 
@@ -291,6 +298,9 @@ async def to_code(config: ConfigType) -> None:
         # setters are compiled. The IDF coexist library is only requested when
         # software_coexistence is actually enabled.
         cg.add_define("USE_SOFTWARE_COEXISTENCE")
+        # ESPHome 2026.12+ excludes esp_coex by default; a2dp.cpp includes
+        # esp_coexist.h, so the src component must list it in REQUIRES.
+        include_builtin_idf_component("esp_coex")
         if software_coexistence and data.has_wifi:
             # Write the current IDF symbol here. request_software_coexistence()
             # only sets an ESPHome flag; ESPHome 2026.x then emits the pre-5.1
