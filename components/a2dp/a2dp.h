@@ -38,6 +38,8 @@ enum class A2DPEvent : uint8_t {
   AUDIO_STOPPED,
   AUDIO_CFG_UPDATED,
   PEER_NAME_UPDATED,
+  /// ACL came up. Logged from the main loop when it is not the device that already holds A2DP.
+  EXTRA_ACL,
 #ifdef USE_A2DP_AVRCP
   AVRCP_VOLUME_CHANGED,
   AVRCP_CT_CONNECTED,

@@ -36,6 +36,15 @@ With media_source `debug_logging: true`: `loop_rate`, `underruns`, `partial_writ
 
 ## Iteration log (append, newest first)
 
+### 2026-11-21 — OPEN: second device cannot connect, `BT_APPL: av scb not available for avdt connection` (ESPHome 2026.12 / IDF 6.1.1)
+
+- **Logs:** `hcif conn complete: hdl 0x80` → `unsniff: hdl 0x81` → `E BT_APPL: av scb not available for avdt connection` → `rs_disc_pending=1` → ~4 s later we send `disconnect: hdl 0x80, rsn:0x13`. Same with and without Sendspin playing. No `[a2dp] BT connected` line for the new device. Link `0x81` stays up (goes back to sniff). `a2dp dump_config` right after boot already shows `A2DP AVRCP CT connected: yes`, i.e. a peer was attached before the new device tried.
+- **Source:** `bta_av_sig_chg()` (`bta_av_act.c:1411`) is identical in IDF 5.5.6 and 6.1.1. It rejects an incoming AVDT link when every LCB slot with a registered SCB is taken. A sink registers one SCB (`BTA_AvRegister` once), so one peer at a time. `AVDT_NUM_LINKS` (2) and `BTDM_CTRL_BR_EDR_MAX_ACL_CONN` (2) did not change.
+- **Not a match for:** the DMA row, the coex rows or the `bta_dm_disable` rows. Nothing to do with Sendspin or I2S.
+- **Confirmed:** a second phone was already connected and holding the only sink stream. Same on 2026.8.2; this is not a 2026.12 regression.
+- **Log:** on a second ACL while A2DP is held, `a2dp` logs which address linked and which peer already holds the stream, and names the Bluedroid line that follows. No change to who gets connected.
+- **Why both cannot stay up:** `esp_a2d_sink_init()` calls `BTA_AvRegister` once. `btc_av_cb` is one state machine with one `peer_bda` (`btc_av.c`). A second `BTA_AvRegister` would make BTA accept the link, then that same state machine would overwrite the first peer. The audio callback and AVRCP CT are also singular. The "play whoever is streaming, do not interrupt the first" policy needs two peers inside that state machine, which is an IDF change to `btc_av.c`, not something the `a2dp` component can do. Not implemented.
+
 ### 2026-11-21 — build fails on ESPHome 2026.12 / IDF 6.1: `esp_coexist.h: No such file or directory`
 
 - **Logs:** `a2dp.cpp:15: fatal error: esp_coexist.h: No such file or directory` when moving `sonocotta-nappali` from ESPHome 2026.8.2 (IDF 5.5) to 2026.12.0 (IDF 6.1.1). After that was fixed: `ESP_A2D_AUDIO_STATE_STOPPED` / `ESP_A2D_AUDIO_STATE_REMOTE_SUSPEND` not declared.

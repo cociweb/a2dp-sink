@@ -389,6 +389,30 @@ void A2DP::loop() {
         this->audio_cfg_callback_.call(ev.sample_rate, ev.channels, ev.bitrate, ev.bits_per_sample);
         break;
 
+      case A2DPEvent::EXTRA_ACL:
+        if (this->connected_ && memcmp(ev.remote_bda, this->last_peer_bda_, sizeof(esp_bd_addr_t)) != 0) {
+          char extra[18];
+          char current[18];
+          format_bda_(ev.remote_bda, extra, sizeof(extra));
+          format_bda_(this->last_peer_bda_, current, sizeof(current));
+          // Bluedroid logs only "av scb not available for avdt connection", then drops the
+          // new link. The sink registers one stream, so a second device cannot join.
+          if (this->peer_name_[0] != '\0') {
+            ESP_LOGW(TAG,
+                     "Bluetooth device %s linked while %s (%s) already holds A2DP. This player streams from one "
+                     "device, so the stack turns the new one away ('av scb not available for avdt connection') and "
+                     "disconnects it.",
+                     extra, this->peer_name_, current);
+          } else {
+            ESP_LOGW(TAG,
+                     "Bluetooth device %s linked while %s already holds A2DP. This player streams from one device, "
+                     "so the stack turns the new one away ('av scb not available for avdt connection') and "
+                     "disconnects it.",
+                     extra, current);
+          }
+        }
+        break;
+
       case A2DPEvent::PEER_NAME_UPDATED:
         strncpy(this->peer_name_, ev.peer_name, sizeof(this->peer_name_) - 1);
         this->peer_name_[sizeof(this->peer_name_) - 1] = '\0';
@@ -925,6 +949,12 @@ void A2DP::handle_gap_event_(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t 
     strncpy(ev.peer_name, reinterpret_cast<const char *>(param->read_rmt_name.rmt_name),
             sizeof(ev.peer_name) - 1);
     ev.peer_name[sizeof(ev.peer_name) - 1] = '\0';
+    xQueueSend(this->event_queue_, &ev, 0);
+  } else if (event == ESP_BT_GAP_ACL_CONN_CMPL_STAT_EVT &&
+             param->acl_conn_cmpl_stat.stat == ESP_BT_STATUS_SUCCESS) {
+    A2DPEventRecord ev{};
+    ev.type = A2DPEvent::EXTRA_ACL;
+    memcpy(ev.remote_bda, param->acl_conn_cmpl_stat.bda, sizeof(ev.remote_bda));
     xQueueSend(this->event_queue_, &ev, 0);
   } else if (event == ESP_BT_GAP_PIN_REQ_EVT) {
     if (this->pairing_pin_len_ > 0) {
