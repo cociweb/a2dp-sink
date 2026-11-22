@@ -18,7 +18,7 @@
 #include "esp_wifi.h"
 #endif
 
-#ifdef USE_A2DP_WIFI_PAUSE
+#if defined(USE_A2DP_WIFI_PAUSE) || defined(USE_A2DP_ROAMING_SUPPRESSION)
 #include "esphome/components/wifi/wifi_component.h"
 #endif
 
@@ -49,6 +49,11 @@ static constexpr uint32_t DIAGNOSTICS_LOG_INTERVAL_MS = 10000;
 // Bluedroid's HCI filter (filter_incoming_event) and reboot. Wait until SBC
 // is past the sniff→active transition.
 static constexpr uint32_t AVRCP_AFTER_AUDIO_MS = 1000;
+// Window after a watchdog-reported pause in which a link loss still counts as streaming.
+static constexpr uint32_t RECENT_STALL_WINDOW_MS = 10000;
+
+// Defined in a2dp_second.cpp: true when its silence watchdog reported a pause within window_ms.
+extern "C" bool a2dp_second_recent_stall(uint32_t window_ms);
 static constexpr uint32_t COEX_AFTER_AUDIO_MS = 250;
 
 static void format_bda_(const esp_bd_addr_t bda, char *buf, size_t len) {
@@ -293,6 +298,10 @@ void A2DP::loop() {
         }
         if (this->connected_) {
           bool was_streaming = this->audio_streaming_;
+          // The silence watchdog in a2dp_second.cpp reports a paused phone after 5 s. Before it
+          // existed, the phone's own AVDT suspend (5-10 s) decided that, so a link loss in that
+          // window still counted as "streaming". Keep that behaviour for the reconnect decision.
+          const bool recently_paused_by_watchdog = a2dp_second_recent_stall(RECENT_STALL_WINDOW_MS);
           this->connected_ = false;
           this->audio_streaming_ = false;
           this->audio_suspend_requested_.store(false, std::memory_order_relaxed);
@@ -326,8 +335,9 @@ void A2DP::loop() {
           //    sitting idle (ACL/AVRCP up, no SBC data) when it dropped is far
           //    more likely an explicit disconnect the phone/user wanted — do not
           //    fight that just because Bluedroid mislabels the reason.
-          if (ev.disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL && was_streaming && this->enabled_ &&
-              this->auto_reconnect_ && this->has_last_peer_) {
+          if (ev.disc_rsn == ESP_A2D_DISC_RSN_ABNORMAL && (was_streaming || recently_paused_by_watchdog) &&
+              this->enabled_ && this->auto_reconnect_ && this->has_last_peer_) {
+            // Only resume playback if audio was really flowing, not merely paused a moment ago.
             this->resume_playback_on_reconnect_ = was_streaming;
             this->reconnect_attempts_ = 0;
             this->reconnect_at_ = millis() + RECONNECT_INITIAL_DELAY_MS;
@@ -419,7 +429,7 @@ void A2DP::loop() {
 #ifdef USE_A2DP_AVRCP
       case A2DPEvent::AVRCP_VOLUME_CHANGED:
         this->avrcp_volume_ = ev.volume;
-        ESP_LOGD(TAG, "AVRCP volume: %u/127", ev.volume);
+        ESP_LOGI(TAG, "Phone set volume %u/127", ev.volume);
         this->avrcp_volume_callback_.call(ev.volume);
         break;
 
@@ -689,6 +699,8 @@ bool A2DP::init_bt_() {
     ret = esp_avrc_tg_set_rn_evt_cap(&evt_set);
     if (ret != ESP_OK)
       ESP_LOGW(TAG, "esp_avrc_tg_set_rn_evt_cap failed: %s", esp_err_to_name(ret));
+    else
+      ESP_LOGI(TAG, "AVRCP absolute volume advertised");
   }
 #endif
 
@@ -701,6 +713,20 @@ bool A2DP::init_bt_() {
   }
 
   esp_a2d_sink_register_data_callback(s_a2d_data_callback_);
+
+  // Android sends volume commands only to an Audio/Video device (headphones, loudspeaker, hi-fi).
+  // The stack default is unclassified, so the phone keeps the volume itself and sends nothing.
+  // Profiles overwrite an earlier value, so this runs after they are initialized.
+  // Minor 0x05 is the Bluetooth assigned number for a loudspeaker.
+  esp_bt_cod_t cod{};
+  cod.major = ESP_BT_COD_MAJOR_DEV_AV;
+  cod.minor = 0x05;
+  cod.service = ESP_BT_COD_SRVC_AUDIO | ESP_BT_COD_SRVC_RENDERING;
+  ret = esp_bt_gap_set_cod(cod, ESP_BT_INIT_COD);
+  if (ret != ESP_OK)
+    ESP_LOGW(TAG, "esp_bt_gap_set_cod failed: %s", esp_err_to_name(ret));
+  else
+    ESP_LOGI(TAG, "Bluetooth class set to loudspeaker");
 
   return true;
 }
@@ -834,27 +860,29 @@ void A2DP::set_coex_preference_(bool prefer_bt) {
 }
 
 void A2DP::apply_wifi_pause_(bool pause) {
+#ifdef USE_A2DP_ROAMING_SUPPRESSION
+  if (wifi::global_wifi_component != nullptr && pause != this->roaming_suppressed_) {
+    this->roaming_suppressed_ = pause;
+    if (pause) {
+      wifi::global_wifi_component->request_roaming_suppression();
+    } else {
+      wifi::global_wifi_component->release_roaming_suppression();
+    }
+  }
+#endif
 #ifdef USE_A2DP_WIFI_PAUSE
   if (!this->pause_wifi_sources_on_connect_ || wifi::global_wifi_component == nullptr)
     return;
   if (pause == this->wifi_paused_)
     return;
   this->wifi_paused_ = pause;
+#ifdef USE_WIFI_RUNTIME_POWER_SAVE
   if (pause) {
-#ifdef USE_WIFI_RUNTIME_POWER_SAVE
     wifi::global_wifi_component->release_high_performance();
-#endif
-#ifdef USE_WIFI_RUNTIME_ROAMING_SUPPRESSION
-    wifi::global_wifi_component->request_roaming_suppression();
-#endif
   } else {
-#ifdef USE_WIFI_RUNTIME_POWER_SAVE
     wifi::global_wifi_component->request_high_performance();
-#endif
-#ifdef USE_WIFI_RUNTIME_ROAMING_SUPPRESSION
-    wifi::global_wifi_component->release_roaming_suppression();
-#endif
   }
+#endif
 #else
   (void) pause;
 #endif
@@ -981,7 +1009,17 @@ void A2DP::set_avrcp_volume(uint8_t volume) {
     volume = 127;
   if (volume == this->avrcp_volume_)
     return;
+  // Phones quantize the volume (about 15 steps) and the speaker volume may be rounded to whole percent elsewhere.
+  // Small differences would otherwise bounce between both sides.
+  const int diff = volume > this->avrcp_volume_ ? volume - this->avrcp_volume_ : this->avrcp_volume_ - volume;
+  if (diff < AVRCP_VOLUME_DEADBAND && volume != 0 && volume != 127)
+    return;
   this->avrcp_volume_ = volume;
+  // The stack drops a CHANGED answer unless the phone has an open volume registration.
+  if (!this->avrcp_volume_registered_)
+    return;
+  this->avrcp_volume_registered_ = false;
+  ESP_LOGI(TAG, "Reporting speaker volume %u/127 to the phone", volume);
   esp_avrc_rn_param_t rn_param;
   rn_param.volume = volume;
   esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE, ESP_AVRC_RN_RSP_CHANGED, &rn_param);
@@ -991,9 +1029,6 @@ void A2DP::handle_avrc_tg_event_(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_pa
   switch (event) {
     case ESP_AVRC_TG_SET_ABSOLUTE_VOLUME_CMD_EVT: {
       uint8_t vol = param->set_abs_vol.volume;
-      esp_avrc_rn_param_t rn_param;
-      rn_param.volume = vol;
-      esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE, ESP_AVRC_RN_RSP_CHANGED, &rn_param);
       A2DPEventRecord ev{};
       ev.type = A2DPEvent::AVRCP_VOLUME_CHANGED;
       ev.volume = vol;
@@ -1002,6 +1037,10 @@ void A2DP::handle_avrc_tg_event_(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_pa
     }
     case ESP_AVRC_TG_REGISTER_NOTIFICATION_EVT: {
       if (param->reg_ntf.event_id == ESP_AVRC_RN_VOLUME_CHANGE) {
+        if (this->avrcp_volume_source_ != nullptr)
+          this->avrcp_volume_ = this->avrcp_volume_source_(this->avrcp_volume_source_ctx_);
+        this->avrcp_volume_registered_ = true;
+        ESP_LOGI(TAG, "Phone registered for volume changes; current volume %u/127", this->avrcp_volume_);
         esp_avrc_rn_param_t rn_param;
         rn_param.volume = this->avrcp_volume_;
         esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE, ESP_AVRC_RN_RSP_INTERIM, &rn_param);

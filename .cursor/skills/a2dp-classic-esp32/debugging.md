@@ -36,6 +36,67 @@ With media_source `debug_logging: true`: `loop_rate`, `underruns`, `partial_writ
 
 ## Iteration log (append, newest first)
 
+### 2026-11-22 — stall watchdog raised from 3 s to 5 s
+- Request: the 3 s silence threshold is too short; use 5 s, which is the short end of the phone's own AVDT suspend (5-10 s).
+- Change: `STALL_MS` in `a2dp_second.cpp` is 5000. Takeover on the other peer's audio stays at 1 s (`TAKEOVER_SILENCE_MS`). The reconnect grace after a watchdog pause stays 10 s.
+- Next evidence: `sent no audible audio for 5000 ms; reporting it as paused`. A drop before that line still has `audio_streaming_` set, so reconnect follows rule 7 directly.
+
+### 2026-11-22 — link loss right after a watchdog pause was not reconnected
+- Symptom: `first peer sent no audible audio for 3000 ms; reporting it as paused`, `A2DP audio stopped`, 6 s later `hcif disc complete rsn 0x8` → `Disconnected while idle or gracefully — not auto-reconnecting`. The phone reconnected by itself 48 s later.
+- Cause: the reconnect code in `a2dp.cpp` (rule 7) is unchanged. The silence watchdog in `a2dp_second.cpp` clears `audio_streaming_` after 3 s, while the phone's own AVDT suspend arrived 5-10 s after a pause. A link loss inside that window used to count as streaming; now it did not.
+- Not explained: the supervision timeout itself (no second peer was connected).
+- Fix: `a2dp_second_recent_stall(10000)` lets the disconnect handler treat a drop within 10 s of a watchdog pause as streaming for the reconnect decision. `resume_playback_on_reconnect_` still follows the real `audio_streaming_`, so a paused phone does not start playing after the reconnect.
+- Next evidence: `Will attempt to reconnect to last source` after a drop in the 3-10 s window after a pause.
+
+### 2026-11-22 — phone volume keys send nothing because the device class is unclassified
+- Symptom: phone volume keys produce no AVRCP event at all. Headphones on the same phone do control their volume, and "disable absolute volume" is off. Master-volume changes still get a re-registration (`AVRCP target event 4`).
+- Cause: the Bluedroid default class of device is unclassified (`BTA_DM_COD_UNCLASSIFIED`). Android only sends SetAbsoluteVolume to an Audio/Video class (headphones, loudspeaker, hi-fi). An unclassified device keeps the volume on the phone, so no command ever reaches the speaker. The AVRCP capability itself is fine, which is why the re-registration works.
+- Changed: after the profiles are initialized (they overwrite an earlier value), `esp_bt_gap_set_cod` sets major Audio/Video, minor loudspeaker, service audio+rendering.
+- Next evidence: the phone stores the class from pairing, so it must forget the speaker and pair again. Then a phone volume key should log `AVRCP target event 3` and `Phone set volume N/127`.
+
+### 2026-11-22 — phone re-registers after every CHANGED but never applies or sends volume
+- Log: `Reporting speaker volume N/127` → `AVRCP target event 4` (REGISTER_NOTIFICATION) → `Phone registered … N/127`. No other target events, also not on phone key presses and not at connect. User: the phone slider does not move either.
+- Reading: the AVRCP layer of the phone (Android `Device::HandleVolumeChanged`) handles our CHANGED/INTERIM correctly (it re-registers), but its audio side never takes the volume and never sends SetAbsoluteVolume, not even the usual one right after connect. That points to absolute volume being off for this device on the phone (developer option "Disable absolute volume", an Android interop/blocklist entry, or a per-device decision cached from before the capability existed). Nothing on the ESP side can force it.
+- Next evidence: check the developer option, then forget and re-pair the speaker. With absolute volume on, a `Phone set volume N/127` should appear right after connect.
+
+### 2026-11-22 — speaker → phone volume works, phone keys produce no event
+- Log: master volume change gives `Reporting speaker volume N/127 to the phone`, then about 1 s later `Phone registered for volume changes; current volume N/127` (phone re-registers after CHANGED, as the spec requires). Pressing the phone volume keys gave no `Phone set volume` line.
+- Checked in the IDF sources: SetAbsoluteVolume parsing and dispatch (`avrc_pars_tg.c`, `btc_rc_upstreams_evt`) need nothing beyond the registration, and the TG SDP record is category 2 (`BTA_AV_RC_SNK_SUPF_TG`). The component and YAML are not in this path: the event never reaches the app callback.
+- Changed: INFO log `AVRCP target event N` for every target callback event (rare events), to see whether the phone sends anything at all.
+- Next evidence: press the phone volume keys while connected and registered. If an event number appears but no `Phone set volume`, the event type is different. If nothing appears, the phone does not send SetAbsoluteVolume (phone side: absolute volume off, other peer, or Android policy). Also note which phone the keys were pressed on (only the first peer has AVRCP).
+
+### 2026-11-22 — link drop after `wifi: Roam scan`, reconnect works; phone registers volume but sends no SetAbsoluteVolume (yet)
+- Symptom: `wifi: Roam scan (-56 dBm, attempt 1/3)` at 04:26:03, then the silence watchdog (`first peer sent no audible audio for 5000 ms`) at 04:26:10, then `hcif disc complete … rsn 0x8` (connection timeout) at 04:26:14. Auto-reconnect worked (abnormal + was_streaming).
+- Cause: the post-connect roaming scan takes the shared radio off-channel and the Classic BT link hits its supervision timeout. Roaming suppression existed only behind `pause_wifi_sources_on_connect`, which also turns Wi-Fi power save back on, so it was off on these devices.
+- Changed: when Wi-Fi is present, a2dp always enables `wifi.enable_runtime_roaming_suppression()` (`USE_A2DP_ROAMING_SUPPRESSION`) and requests suppression while a phone is connected (same `apply_wifi_pause_` call sites). Power save is still only touched by `pause_wifi_sources_on_connect`.
+- Volume: after the reconnect `Phone registered for volume changes; current volume 102/127` appeared (Nokia G60), so the capability works. No `Phone set volume` lines were in the log yet; the next evidence is a log captured while pressing the phone volume keys after the registration line.
+
+### 2026-11-22 — volume loop 79% <-> 80% from boot, root cause in YAML (not A2DP, not Sendspin)
+- Symptom: `pcm5122 Volume: -12dB` / `Mute OFF entered` about 120 times per second and a `Media Player` state publish every ~125 ms, starting right after boot with no phone connected.
+- Evidence: temporary debug log in `speaker_source` showed `volume call: 0.790` / `0.800` alternating every ~25 ms. These are `media_player.volume_set` calls from the `master_volume` number `set_action` (`x / 100`).
+- Cause: `on_volume` fires deferred, so it can carry an old volume. `number.set x*100` of that old value made `set_action` set the volume back, which queued another old event. One early disagreement (restored 79% vs `volume_set` 80% at boot) kept two stale events alive forever.
+- Ruled out: AVRCP reports (no `Reporting` lines), Sendspin echo (a guard in `notify_volume_changed` did not stop it). The debug and Sendspin patches in the container were reverted.
+- Fix (YAML, all `sonocotta-*.yaml`): `on_volume` sets `master_volume` from `id(AudioKit).volume * 100` instead of `x`. Flashed on nappali: the loop is gone.
+
+### 2026-11-22 — pcm5122 volume writes keep repeating with no AVRCP lines
+- Symptom: after the CHANGED fix the log is only `pcm5122 Mute OFF` and `Volume: -12dB`, repeating with no `Reporting` or `Phone set volume` lines.
+- Cause: the loop does not go through AVRCP. The Sendspin server echoes the player's own volume back (`player_role.cpp`: `update_volume` publishes state, the server command comes back as `on_volume_changed`). The source applies it unconditionally, and the two sides round differently (AVRCP 0-127 vs Sendspin whole percent), so the speaker volume keeps moving on its own.
+- Changed: the AVRCP side only reports a volume that has stayed the same for 200 ms (`set_timeout` in `a2dp_avrcp`). This stops the reports from feeding the loop; it does not stop the speaker-side writes.
+- Next evidence: the pcm5122 lines should stop or slow to one per real change. If they keep repeating, the loop is entirely inside Sendspin and needs a change in the Sendspin source, which is out of scope for this component.
+
+### 2026-11-22 — volume ping-pong 102/127 <-> 100/127 every ~65 ms, `BT_BTC: Event id not registered: event_id = d`
+- Symptom: the log is full of `Reporting speaker volume 102/127` and `100/127` (80% and 79%) plus `Event id not registered` and pcm5122 volume writes, no phone input.
+- Cause (stack, `btc_avrc.c send_metamsg_rsp`): a CHANGED answer clears the phone's volume registration until the phone registers again, and the stack drops CHANGED without a registration. We sent CHANGED for every speaker volume change and also after each phone SetAbsoluteVolume (not allowed by the spec; only local changes get CHANGED). Phones quantize the volume (about 15 steps) and the Sendspin path rounds to whole percent, so the two sides kept correcting each other by 1-2 steps.
+- Ruled out: YAML wiring. It would use the same two calls and not break the loop. Reverting the component change would also leave the phone without absolute volume.
+- Changed: no CHANGED after a phone set; report only while a registration is open (`avrcp_volume_registered_`, set on RegisterNotification, cleared on CHANGED); ignore speaker changes smaller than 4/127 (except 0 and 127).
+- Next evidence: a log with `Phone registered…`, `Phone set volume…` and at most one `Reporting…` per real change.
+
+### 2026-11-22 — phone volume still not in sync with the master volume (sync_volume on)
+- Symptom: with `sync_volume: true` the phone slider and the speaker master volume still do not follow each other. Sendspin keeps its volume in sync.
+- Found: the INTERIM answer to the phone's volume RegisterNotification used `avrcp_volume_`, which defaults to 127. The phone slider therefore jumped to 100% at connect, while the speaker was at its own level. The stack default for supported notification events is 0 (`cs_rn_dft_supported_evt`), so `esp_avrc_tg_set_rn_evt_cap` is required and runs asynchronously in the BTC task (it can be rejected after returning ESP_OK).
+- Changed: INTERIM now reads the live media player volume through `set_avrcp_volume_source`. Added INFO logs for rare events only: capability advertised, phone registered (with volume), phone set volume, speaker volume reported to the phone.
+- Next evidence: after a phone reconnect, expect `AVRCP absolute volume advertised`, `Phone registered for volume changes`, then `Phone set volume` on each phone button press. If the registration line is missing, the phone does not see the capability (AVRCP link or cache). If it is present but the speaker does not move, look at `apply_phone_volume_`.
+
 ### 2026-11-22 — phone volume only scaled inside the master volume
 
 - **Cause:** the AVRCP target never advertised the volume-change notification, so the phone kept attenuating the audio itself and the speaker master volume stayed a ceiling.

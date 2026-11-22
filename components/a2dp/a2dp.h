@@ -196,6 +196,11 @@ class A2DP : public Component {
   // Advertise absolute volume only when the config asks the phone volume to
   // drive the media player. Otherwise the phone keeps scaling its own audio.
   void set_sync_avrcp_volume(bool sync) { this->sync_avrcp_volume_ = sync; }
+  /// Called from the Bluetooth task when the phone asks for the current volume.
+  void set_avrcp_volume_source(uint8_t (*source)(void *), void *ctx) {
+    this->avrcp_volume_source_ = source;
+    this->avrcp_volume_source_ctx_ = ctx;
+  }
 
   // Tell the phone the speaker volume changed locally (0-127).
   void set_avrcp_volume(uint8_t volume);
@@ -295,6 +300,9 @@ class A2DP : public Component {
 #ifdef USE_A2DP_WIFI_PAUSE
   bool wifi_paused_{false};
 #endif
+#ifdef USE_A2DP_ROAMING_SUPPRESSION
+  bool roaming_suppressed_{false};
+#endif
   /// @brief Wi-Fi power-save mode captured before BT was prioritised, so it can be restored.
   wifi_ps_type_t saved_wifi_ps_{WIFI_PS_MIN_MODEM};
   /// @brief True while saved_wifi_ps_ holds a mode to restore (BT is currently prioritised).
@@ -315,6 +323,10 @@ class A2DP : public Component {
 #ifdef USE_A2DP_AVRCP
   uint8_t avrcp_volume_{127};
   bool sync_avrcp_volume_{false};
+  volatile bool avrcp_volume_registered_{false};
+  static constexpr uint8_t AVRCP_VOLUME_DEADBAND = 4;
+  uint8_t (*avrcp_volume_source_)(void *){nullptr};
+  void *avrcp_volume_source_ctx_{nullptr};
   bool avrcp_ct_connected_{false};
   uint8_t avrc_ct_tl_{0};
   uint32_t metadata_refresh_at_{0};

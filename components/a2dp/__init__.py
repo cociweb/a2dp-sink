@@ -288,6 +288,15 @@ async def to_code(config: ConfigType) -> None:
     request_bluetooth()
     add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
 
+    if data.has_wifi:
+        from esphome.components import wifi
+
+        # A Wi-Fi roaming scan takes the shared radio off-channel for seconds and drops
+        # the Classic BT link (supervision timeout), so pause roaming while a phone is connected.
+        if hasattr(wifi, "enable_runtime_roaming_suppression"):
+            wifi.enable_runtime_roaming_suppression()
+            cg.add_define("USE_A2DP_ROAMING_SUPPRESSION")
+
     if coex := config.get(CONF_COEXISTENCE):
         software_coexistence = coex[CONF_SOFTWARE_COEXISTENCE]
         cg.add(var.set_software_coexistence(software_coexistence))

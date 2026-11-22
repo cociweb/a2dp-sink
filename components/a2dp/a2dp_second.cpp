@@ -213,8 +213,10 @@ static Owner decoder_for_ = Owner::NONE;
 static bool suspend_pending_first_ = false;
 static bool suspend_pending_second_ = false;
 
-// Silence after which the playing peer is reported as paused.
-static constexpr uint32_t STALL_MS = 3000;
+// Silence after which the playing peer is reported as paused. Five seconds is the
+// short end of the phone's own AVDT suspend (5-10 s), so a brief gap does not
+// look like a pause and a real pause is not left waiting on the phone.
+static constexpr uint32_t STALL_MS = 5000;
 // Silence after which another peer's audio or START takes the sink over.
 static constexpr uint32_t TAKEOVER_SILENCE_MS = 1000;
 
@@ -444,10 +446,19 @@ static void on_data_(Owner who, void *data) {
     osi_free_func(data);
 }
 
+static volatile uint32_t last_stall_ms_ = 0;
+
+// Used by the reconnect decision in a2dp.cpp.
+extern "C" bool a2dp_second_recent_stall(uint32_t window_ms) {
+  const uint32_t at = last_stall_ms_;
+  return at != 0 && now_ms_() - at < window_ms;
+}
+
 static void stall_check_(void *) {
   const Owner who = owner_;
   if (who == Owner::NONE || now_ms_() - last_data_ms_ < STALL_MS)
     return;
+  last_stall_ms_ = now_ms_();
   ESP_LOGW(TAG, "%s peer sent no audible audio for %u ms; reporting it as paused",
            who == Owner::SECOND ? "second" : "first", (unsigned) STALL_MS);
   owner_ = Owner::NONE;

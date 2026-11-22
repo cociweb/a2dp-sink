@@ -37,8 +37,23 @@ class A2DPAVRCP : public Component, public Parented<A2DP> {
         this->apply_phone_volume_(volume);
     });
     if (this->sync_volume_ && this->media_player_ != nullptr) {
-      this->media_player_->add_on_state_callback(
-          [this](media_player::MediaPlayerState) { this->publish_player_volume_(); });
+      this->parent_->set_avrcp_volume_source(
+          [](void *ctx) { return static_cast<A2DPAVRCP *>(ctx)->player_volume_(); }, this);
+      this->media_player_->add_on_state_callback([this](media_player::MediaPlayerState) {
+        // A volume change can bounce for a moment while the player and the phone round it.
+        // Only publish a value that stays put.
+        const uint8_t volume = this->player_volume_();
+        if (volume == this->last_published_)
+          return;
+        this->last_published_ = volume;
+        this->set_timeout("avrcp_volume", 200, [this, volume]() {
+          const uint8_t settled = this->player_volume_();
+          if (settled == volume)
+            this->parent_->set_avrcp_volume(settled);
+          else
+            this->last_published_ = settled;
+        });
+      });
     }
   }
 
@@ -82,19 +97,18 @@ class A2DPAVRCP : public Component, public Parented<A2DP> {
     this->media_player_->make_call().set_volume(target).perform();
   }
 
-  void publish_player_volume_() {
-    if (this->media_player_ == nullptr)
-      return;
+  uint8_t player_volume_() const {
     int volume = static_cast<int>(std::lround(this->media_player_->volume * 127.0f));
     if (volume < 0)
       volume = 0;
     if (volume > 127)
       volume = 127;
-    this->parent_->set_avrcp_volume(static_cast<uint8_t>(volume));
+    return static_cast<uint8_t>(volume);
   }
 
   media_player::MediaPlayer *media_player_{nullptr};
   bool sync_volume_{false};
+  uint8_t last_published_{255};
 };
 
 // ---------------------------------------------------------------------------
