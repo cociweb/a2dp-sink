@@ -395,19 +395,15 @@ void A2DP::loop() {
           char current[18];
           format_bda_(ev.remote_bda, extra, sizeof(extra));
           format_bda_(this->last_peer_bda_, current, sizeof(current));
-          // Bluedroid logs only "av scb not available for avdt connection", then drops the
-          // new link. The sink registers one stream, so a second device cannot join.
+          // A second stream slot (a2dp_second.cpp) accepts this device. Whichever device plays owns
+          // the speaker; the other one is asked to pause.
           if (this->peer_name_[0] != '\0') {
-            ESP_LOGW(TAG,
-                     "Bluetooth device %s linked while %s (%s) already holds A2DP. This player streams from one "
-                     "device, so the stack turns the new one away ('av scb not available for avdt connection') and "
-                     "disconnects it.",
+            ESP_LOGI(TAG, "Second Bluetooth device %s linked while %s (%s) is connected. It can connect too; "
+                          "the device that plays owns the speaker.",
                      extra, this->peer_name_, current);
           } else {
-            ESP_LOGW(TAG,
-                     "Bluetooth device %s linked while %s already holds A2DP. This player streams from one device, "
-                     "so the stack turns the new one away ('av scb not available for avdt connection') and "
-                     "disconnects it.",
+            ESP_LOGI(TAG, "Second Bluetooth device %s linked while %s is connected. It can connect too; "
+                          "the device that plays owns the speaker.",
                      extra, current);
           }
         }
