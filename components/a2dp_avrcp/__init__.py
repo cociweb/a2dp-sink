@@ -1,6 +1,7 @@
 from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
+from esphome.components import media_player
 from esphome.components.a2dp import CONF_A2DP_ID, A2DP, a2dp_ns, require_classic_bluetooth
 from esphome.const import CONF_ID
 from esphome.core import ID
@@ -11,6 +12,15 @@ CODEOWNERS = ["@cociweb"]
 DEPENDENCIES = ["a2dp"]
 
 CONF_ON_VOLUME_CHANGED = "on_volume_changed"
+CONF_MEDIA_PLAYER_ID = "media_player_id"
+CONF_SYNC_VOLUME = "sync_volume"
+
+
+def _validate_sync_volume(config: ConfigType) -> ConfigType:
+    if config.get(CONF_SYNC_VOLUME) and CONF_MEDIA_PLAYER_ID not in config:
+        raise cv.Invalid("media_player_id is required when sync_volume is true", path=[CONF_SYNC_VOLUME])
+    return config
+
 
 A2DPAVRCP = a2dp_ns.class_(
     "A2DPAVRCP",
@@ -40,10 +50,13 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.GenerateID(): cv.declare_id(A2DPAVRCP),
             cv.GenerateID(CONF_A2DP_ID): cv.use_id(A2DP),
+            cv.Optional(CONF_MEDIA_PLAYER_ID): cv.use_id(media_player.MediaPlayer),
+            cv.Optional(CONF_SYNC_VOLUME, default=False): cv.boolean,
             cv.Optional(CONF_ON_VOLUME_CHANGED): automation.validate_automation({}),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     require_classic_bluetooth,
+    _validate_sync_volume,
 )
 
 AVRCP_SIMPLE_ACTION_SCHEMA = automation.maybe_simple_id(
@@ -114,5 +127,10 @@ async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await cg.register_parented(var, config[CONF_A2DP_ID])
+    if config[CONF_SYNC_VOLUME]:
+        hub = await cg.get_variable(config[CONF_A2DP_ID])
+        cg.add(hub.set_sync_avrcp_volume(True))
+        cg.add(var.set_sync_volume(True))
+        cg.add(var.set_media_player(await cg.get_variable(config[CONF_MEDIA_PLAYER_ID])))
     await automation.build_callback_automations(var, config, _CALLBACK_AUTOMATIONS)
     cg.add_define("USE_A2DP_AVRCP")

@@ -9,6 +9,9 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include "esphome/components/a2dp/a2dp.h"
+#include "esphome/components/media_player/media_player.h"
+
+#include <cmath>
 
 namespace esphome::a2dp {
 
@@ -24,10 +27,19 @@ class A2DPAVRCP : public Component, public Parented<A2DP> {
  public:
   float get_setup_priority() const override { return setup_priority::AFTER_BLUETOOTH; }
 
+  void set_media_player(media_player::MediaPlayer *player) { this->media_player_ = player; }
+  void set_sync_volume(bool sync) { this->sync_volume_ = sync; }
+
   void setup() override {
     this->parent_->add_on_avrcp_volume_callback([this](uint8_t volume) {
       this->volume_callback_.call(volume);
+      if (this->sync_volume_)
+        this->apply_phone_volume_(volume);
     });
+    if (this->sync_volume_ && this->media_player_ != nullptr) {
+      this->media_player_->add_on_state_callback(
+          [this](media_player::MediaPlayerState) { this->publish_player_volume_(); });
+    }
   }
 
   void dump_config() override {
@@ -57,6 +69,32 @@ class A2DPAVRCP : public Component, public Parented<A2DP> {
   uint8_t get_volume() const { return this->parent_->get_avrcp_volume(); }
 
   CallbackManager<void(uint8_t)> volume_callback_;
+
+ protected:
+  // Phone absolute volume becomes the media player volume. A local change of
+  // that volume is reported back, so the phone slider follows it.
+  void apply_phone_volume_(uint8_t volume) {
+    if (this->media_player_ == nullptr)
+      return;
+    const float target = static_cast<float>(volume) / 127.0f;
+    if (std::fabs(this->media_player_->volume - target) < (1.0f / 127.0f))
+      return;
+    this->media_player_->make_call().set_volume(target).perform();
+  }
+
+  void publish_player_volume_() {
+    if (this->media_player_ == nullptr)
+      return;
+    int volume = static_cast<int>(std::lround(this->media_player_->volume * 127.0f));
+    if (volume < 0)
+      volume = 0;
+    if (volume > 127)
+      volume = 127;
+    this->parent_->set_avrcp_volume(static_cast<uint8_t>(volume));
+  }
+
+  media_player::MediaPlayer *media_player_{nullptr};
+  bool sync_volume_{false};
 };
 
 // ---------------------------------------------------------------------------

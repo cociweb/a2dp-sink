@@ -192,6 +192,13 @@ class A2DP : public Component {
   }
 
   uint8_t get_avrcp_volume() const { return this->avrcp_volume_; }
+
+  // Advertise absolute volume only when the config asks the phone volume to
+  // drive the media player. Otherwise the phone keeps scaling its own audio.
+  void set_sync_avrcp_volume(bool sync) { this->sync_avrcp_volume_ = sync; }
+
+  // Tell the phone the speaker volume changed locally (0-127).
+  void set_avrcp_volume(uint8_t volume);
   bool is_avrcp_ct_connected() const { return this->avrcp_ct_connected_; }
 
   void send_avrc_passthrough(uint8_t key_code, bool refresh_metadata = false) {
@@ -307,6 +314,7 @@ class A2DP : public Component {
   char peer_name_[64]{};  ///< Last connected device name (truncated to 63 chars)
 #ifdef USE_A2DP_AVRCP
   uint8_t avrcp_volume_{127};
+  bool sync_avrcp_volume_{false};
   bool avrcp_ct_connected_{false};
   uint8_t avrc_ct_tl_{0};
   uint32_t metadata_refresh_at_{0};

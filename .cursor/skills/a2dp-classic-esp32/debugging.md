@@ -36,6 +36,11 @@ With media_source `debug_logging: true`: `loop_rate`, `underruns`, `partial_writ
 
 ## Iteration log (append, newest first)
 
+### 2026-11-22 — phone volume only scaled inside the master volume
+
+- **Cause:** the AVRCP target never advertised the volume-change notification, so the phone kept attenuating the audio itself and the speaker master volume stayed a ceiling.
+- **Change:** `a2dp_avrcp` has `sync_volume` (default false). When true, `media_player_id` is required: the target advertises `ESP_AVRC_RN_VOLUME_CHANGE`, a phone absolute volume sets that player, and a local player change is reported back. With it false the phone keeps scaling its own audio. `sonocotta-nappali.yaml` sets `sync_volume: true` and `media_player_id: AudioKit`. The phone has to reconnect before it drops its own attenuation.
+
 ### 2026-11-22 — diagnostic logs removed: they flooded the serial port and broke up playback
 
 - Removed from `a2dp_second.cpp`: `links:`, `stream stats (10 s)`, `second stream delivered`, `no packet for`, the sniff-interval and sniff-retry lines, and the audible/silent packet counts. The behaviour stays: long sniff interval, sniff retry, silence check, resume of a second peer that wanted to play.

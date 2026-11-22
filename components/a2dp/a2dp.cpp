@@ -681,6 +681,15 @@ bool A2DP::init_bt_() {
     ESP_LOGE(TAG, "esp_avrc_tg_init failed: %s", esp_err_to_name(ret));
     return false;
   }
+  // Without this the phone keeps its own volume and only scales the audio
+  // inside the speaker's master volume. Skip it unless sync_volume is set.
+  if (this->sync_avrcp_volume_) {
+    esp_avrc_rn_evt_cap_mask_t evt_set{};
+    esp_avrc_rn_evt_bit_mask_operation(ESP_AVRC_BIT_MASK_OP_SET, &evt_set, ESP_AVRC_RN_VOLUME_CHANGE);
+    ret = esp_avrc_tg_set_rn_evt_cap(&evt_set);
+    if (ret != ESP_OK)
+      ESP_LOGW(TAG, "esp_avrc_tg_set_rn_evt_cap failed: %s", esp_err_to_name(ret));
+  }
 #endif
 
   esp_a2d_register_callback(s_a2d_callback_);
@@ -967,6 +976,17 @@ void A2DP::handle_gap_event_(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t 
 }
 
 #ifdef USE_A2DP_AVRCP
+void A2DP::set_avrcp_volume(uint8_t volume) {
+  if (volume > 127)
+    volume = 127;
+  if (volume == this->avrcp_volume_)
+    return;
+  this->avrcp_volume_ = volume;
+  esp_avrc_rn_param_t rn_param;
+  rn_param.volume = volume;
+  esp_avrc_tg_send_rn_rsp(ESP_AVRC_RN_VOLUME_CHANGE, ESP_AVRC_RN_RSP_CHANGED, &rn_param);
+}
+
 void A2DP::handle_avrc_tg_event_(esp_avrc_tg_cb_event_t event, esp_avrc_tg_cb_param_t *param) {
   switch (event) {
     case ESP_AVRC_TG_SET_ABSOLUTE_VOLUME_CMD_EVT: {
