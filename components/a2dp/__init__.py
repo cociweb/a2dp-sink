@@ -357,4 +357,18 @@ async def to_code(config: ConfigType) -> None:
         add_idf_sdkconfig_option("CONFIG_BT_SSP_ENABLED", False)
         add_idf_sdkconfig_option("CONFIG_BT_LEGACY_PIN_PAIRING_ENABLED", True)
 
+    # dual-a2dp experiment: one extra AVDT stream endpoint, and wrappers that
+    # keep a second incoming link off the single Bluedroid state machine.
+    cg.add_build_flag("-DCONFIG_BT_A2DP_SEP_NUM_MAX=2")
+    cg.add_build_flag("-Wl,--wrap=BTA_AvEnable")
+    cg.add_build_flag("-Wl,--wrap=BTA_AvRegister")
+    # libbt is linked after libsrc, so the wrapped references appear too late
+    # to pull this object out of the archive on their own.
+    cg.add_build_flag("-Wl,--undefined=__wrap_BTA_AvEnable")
+    cg.add_build_flag("-Wl,--undefined=__wrap_BTA_AvRegister")
+    cg.add_build_flag("-Wl,--wrap=bta_av_ssm_execute")
+    cg.add_build_flag("-Wl,--undefined=__wrap_bta_av_ssm_execute")
+    cg.add_build_flag("-Wl,--wrap=BTM_SetPowerMode")
+    cg.add_build_flag("-Wl,--undefined=__wrap_BTM_SetPowerMode")
+
     cg.add_define("USE_A2DP")
